@@ -48,7 +48,7 @@ import org.elasticsearch.index.analysis.CustomAnalyzer;
 import org.elasticsearch.index.analysis.NamedAnalyzer;
 import org.elasticsearch.index.analysis.ShingleTokenFilterFactory;
 import org.elasticsearch.index.analysis.TokenFilterFactory;
-import org.elasticsearch.search.internal.SearchContext;
+import org.elasticsearch.index.mapper.MapperService;
 import org.elasticsearch.search.suggest.SuggestionSearchContext.SuggestionContext;
 
 public final class SuggestUtils {
@@ -188,7 +188,7 @@ public final class SuggestUtils {
     public static StringDistance resolveDistance(String distanceVal) {
         if ("internal".equals(distanceVal)) {
             return DirectSpellChecker.INTERNAL_LEVENSHTEIN;
-        } else if ("damerau_levenshtein".equals(distanceVal)) {
+        } else if ("damerau_levenshtein".equals(distanceVal) || "damerauLevenshtein".equals(distanceVal)) {
             return new LuceneLevenshteinDistance();
         } else if ("levenstein".equals(distanceVal)) {
             return new LevensteinDistance();
@@ -211,16 +211,16 @@ public final class SuggestUtils {
                 suggestion.sort(SuggestUtils.resolveSort(parser.text()));
             } else if ("string_distance".equals(fieldName) || "stringDistance".equals(fieldName)) {
                 suggestion.stringDistance(SuggestUtils.resolveDistance(parser.text()));
-            } else if ("max_edits".equals(fieldName) || "maxEdits".equals(fieldName) || "fuzziness".equals(fieldName)) {
+            } else if ("max_edits".equals(fieldName) || "maxEdits".equals(fieldName)) {
                 suggestion.maxEdits(parser.intValue());
                 if (suggestion.maxEdits() < 1 || suggestion.maxEdits() > LevenshteinAutomata.MAXIMUM_SUPPORTED_DISTANCE) {
                     throw new ElasticSearchIllegalArgumentException("Illegal max_edits value " + suggestion.maxEdits());
                 }
-            } else if ("max_inspections".equals(fieldName)) {
+            } else if ("max_inspections".equals(fieldName) || "maxInspections".equals(fieldName)) {
                 suggestion.maxInspections(parser.intValue());
             } else if ("max_term_freq".equals(fieldName) || "maxTermFreq".equals(fieldName)) {
                 suggestion.maxTermFreq(parser.floatValue());
-            } else if ("prefix_length".equals(fieldName) || "prefixLength".equals(fieldName)) {
+            } else if ("prefix_len".equals(fieldName) || "prefixLen".equals(fieldName)) {
                 suggestion.prefixLength(parser.intValue());
             } else if ("min_word_len".equals(fieldName) || "minWordLen".equals(fieldName)) {
                 suggestion.minQueryLength(parser.intValue());
@@ -232,12 +232,12 @@ public final class SuggestUtils {
             return true;
     }
     
-    public static boolean parseSuggestContext(XContentParser parser, SearchContext context, String fieldName,
+    public static boolean parseSuggestContext(XContentParser parser, MapperService mapperService, String fieldName,
             SuggestionSearchContext.SuggestionContext suggestion) throws IOException {
         
         if ("analyzer".equals(fieldName)) {
             String analyzerName = parser.text();
-            Analyzer analyzer = context.mapperService().analysisService().analyzer(analyzerName);
+            Analyzer analyzer = mapperService.analysisService().analyzer(analyzerName);
             if (analyzer == null) {
                 throw new ElasticSearchIllegalArgumentException("Analyzer [" + analyzerName + "] doesn't exists");
             }
@@ -256,7 +256,7 @@ public final class SuggestUtils {
     }
     
     
-    public static void verifySuggestion(SearchContext context, BytesRef globalText, SuggestionContext suggestion) {
+    public static void verifySuggestion(MapperService mapperService, BytesRef globalText, SuggestionContext suggestion) {
         // Verify options and set defaults
         if (suggestion.getField() == null) {
             throw new ElasticSearchIllegalArgumentException("The required field option is missing");
@@ -268,7 +268,7 @@ public final class SuggestUtils {
             suggestion.setText(globalText);
         }
         if (suggestion.getAnalyzer() == null) {
-            suggestion.setAnalyzer(context.mapperService().searchAnalyzer());
+            suggestion.setAnalyzer(mapperService.searchAnalyzer());
         }
         if (suggestion.getShardSize() == -1) {
             suggestion.setShardSize(Math.max(suggestion.getSize(), 5));

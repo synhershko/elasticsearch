@@ -19,13 +19,13 @@
 package org.elasticsearch.search.suggest;
 import java.io.IOException;
 
+import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.util.CharsRef;
-import org.elasticsearch.search.internal.SearchContext;
 import org.elasticsearch.search.suggest.Suggest.Suggestion;
 import org.elasticsearch.search.suggest.Suggest.Suggestion.Entry;
 import org.elasticsearch.search.suggest.Suggest.Suggestion.Entry.Option;
 
 public interface Suggester<T extends SuggestionSearchContext.SuggestionContext> {
-    public abstract Suggestion<? extends Entry<? extends Option>> execute(String name, T suggestion, SearchContext context, CharsRef spare)
+    public abstract Suggestion<? extends Entry<? extends Option>> execute(String name, T suggestion, IndexReader indexReader, CharsRef spare)
             throws IOException;
 }

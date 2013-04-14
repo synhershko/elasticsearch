@@ -622,6 +622,43 @@ public class SimpleQueryTests extends AbstractNodesTests {
     }
 
     @Test
+    public void testMultiMatchQueryZeroTermsQuery() {
+        try {
+            client.admin().indices().prepareDelete("test").execute().actionGet();
+        } catch (Exception e) {
+            // ignore
+        }
+
+        client.admin().indices().prepareCreate("test").setSettings(ImmutableSettings.settingsBuilder().put("index.number_of_shards", 1)).execute().actionGet();
+        client.prepareIndex("test", "type1", "1").setSource("field1", "value1", "field2", "value2").execute().actionGet();
+        client.prepareIndex("test", "type1", "2").setSource("field1", "value3", "field2", "value4").execute().actionGet();
+        client.admin().indices().prepareRefresh("test").execute().actionGet();
+
+        BoolQueryBuilder boolQuery = boolQuery()
+                .must(multiMatchQuery("a", "field1", "field2").zeroTermsQuery(MatchQueryBuilder.ZeroTermsQuery.NONE))
+                .must(multiMatchQuery("value1", "field1", "field2").zeroTermsQuery(MatchQueryBuilder.ZeroTermsQuery.NONE)); // Fields are ORed together
+        SearchResponse searchResponse = client.prepareSearch()
+                .setQuery(boolQuery)
+                .execute().actionGet();
+        assertThat(searchResponse.getHits().totalHits(), equalTo(0l));
+
+        boolQuery = boolQuery()
+                .must(multiMatchQuery("a", "field1", "field2").zeroTermsQuery(MatchQueryBuilder.ZeroTermsQuery.ALL))
+                .must(multiMatchQuery("value4", "field1", "field2").zeroTermsQuery(MatchQueryBuilder.ZeroTermsQuery.ALL));
+        searchResponse = client.prepareSearch()
+                .setQuery(boolQuery)
+                .execute().actionGet();
+        assertThat(searchResponse.getHits().totalHits(), equalTo(1l));
+
+        boolQuery = boolQuery()
+                .must(multiMatchQuery("a", "field1").zeroTermsQuery(MatchQueryBuilder.ZeroTermsQuery.ALL));
+        searchResponse = client.prepareSearch()
+                .setQuery(boolQuery)
+                .execute().actionGet();
+        assertThat(searchResponse.getHits().totalHits(), equalTo(2l));
+    }
+
+    @Test
     public void testFuzzyQueryString() {
         client.admin().indices().prepareDelete().execute().actionGet();
 
@@ -644,13 +681,11 @@ public class SimpleQueryTests extends AbstractNodesTests {
         assertThat(searchResponse.getHits().totalHits(), equalTo(1l));
         assertThat(searchResponse.getHits().getAt(0).id(), equalTo("1"));
 
-        // Note, this test fails, i.e returns 0 results, the reason is that Lucene QP only supports numbers after the ~
-        // once this is changed in lucene to support strings, then this test will fail (good!)
         searchResponse = client.prepareSearch()
                 .setQuery(queryString("date:2012-02-02~1d"))
                 .execute().actionGet();
         assertThat("Failures " + Arrays.toString(searchResponse.getShardFailures()), searchResponse.getShardFailures().length, equalTo(0));
-        assertThat(searchResponse.getHits().totalHits(), equalTo(0l));
+        assertThat(searchResponse.getHits().totalHits(), equalTo(1l));
     }
 
     @Test
@@ -1052,4 +1087,61 @@ public class SimpleQueryTests extends AbstractNodesTests {
         assertThat(searchResponse.getHits().getTotalHits(), equalTo(1l));
         assertThat(searchResponse.getHits().getAt(0).getId(), equalTo("1"));
     }
+
+    @Test
+    public void testNumericRangeFilter_2826() throws Exception {
+        client.admin().indices().prepareDelete().execute().actionGet();
+        client.admin().indices().prepareCreate("test").setSettings(
+                ImmutableSettings.settingsBuilder()
+                        .put("index.number_of_shards", 1)
+                        .put("index.number_of_replicas", 0)
+        )
+                .addMapping("type1", jsonBuilder().startObject().startObject("type1").startObject("properties")
+                        .startObject("num_byte").field("type", "byte").endObject()
+                        .startObject("num_short").field("type", "short").endObject()
+                        .startObject("num_integer").field("type", "integer").endObject()
+                        .startObject("num_long").field("type", "long").endObject()
+                        .startObject("num_float").field("type", "float").endObject()
+                        .startObject("num_double").field("type", "double").endObject()
+                        .endObject().endObject().endObject())
+                .execute().actionGet();
+
+        client.prepareIndex("test", "type1", "1").setSource(jsonBuilder().startObject()
+                .field("num_long", 1)
+                .endObject())
+                .execute().actionGet();
+
+        client.prepareIndex("test", "type1", "2").setSource(jsonBuilder().startObject()
+                .field("num_long", 2)
+                .endObject())
+                .execute().actionGet();
+
+        client.prepareIndex("test", "type1", "3").setSource(jsonBuilder().startObject()
+                .field("num_long", 3)
+                .endObject())
+                .execute().actionGet();
+
+        client.prepareIndex("test", "type1", "4").setSource(jsonBuilder().startObject()
+                .field("num_long", 4)
+                .endObject())
+                .execute().actionGet();
+
+        client.admin().indices().prepareRefresh().execute().actionGet();
+        SearchResponse response = client.prepareSearch("test").setFilter(
+                FilterBuilders.boolFilter()
+                        .should(FilterBuilders.rangeFilter("num_long").from(1).to(2))
+                        .should(FilterBuilders.rangeFilter("num_long").from(3).to(4))
+        ).execute().actionGet();
+        assertThat(response.getHits().totalHits(), equalTo(4l));
+
+        // This made 2826 fail! (only with bit based filters)
+        response = client.prepareSearch("test").setFilter(
+                FilterBuilders.boolFilter()
+                        .should(FilterBuilders.numericRangeFilter("num_long").from(1).to(2))
+                        .should(FilterBuilders.numericRangeFilter("num_long").from(3).to(4))
+        ).execute().actionGet();
+
+        assertThat(response.getHits().totalHits(), equalTo(4l));
+    }
+
 }

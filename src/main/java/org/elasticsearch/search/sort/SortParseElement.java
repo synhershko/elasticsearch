@@ -79,10 +79,16 @@ public class SortParseElement implements SearchParseElement {
                     addCompoundSortField(parser, context, sortFields);
                 } else if (token == XContentParser.Token.VALUE_STRING) {
                     addSortField(context, sortFields, parser.text(), false, false, null, null, null, null);
+                } else {
+                    throw new ElasticSearchIllegalArgumentException("malformed sort format, within the sort array, an object, or an actual string are allowed");
                 }
             }
-        } else {
+        } else if (token == XContentParser.Token.VALUE_STRING) {
+            addSortField(context, sortFields, parser.text(), false, false, null, null, null, null);
+        } else if (token == XContentParser.Token.START_OBJECT) {
             addCompoundSortField(parser, context, sortFields);
+        } else {
+            throw new ElasticSearchIllegalArgumentException("malformed sort format, either start with array, object, or an actual string");
         }
         if (!sortFields.isEmpty()) {
             // optimize if we just sort on score non reversed, we don't really need sorting
@@ -122,6 +128,8 @@ public class SortParseElement implements SearchParseElement {
                         reverse = SCORE_FIELD_NAME.equals(fieldName);
                     } else if (direction.equals("desc")) {
                         reverse = !SCORE_FIELD_NAME.equals(fieldName);
+                    } else {
+                        throw new ElasticSearchIllegalArgumentException("sort direction [" + fieldName + "] not supported");
                     }
                     addSortField(context, sortFields, fieldName, reverse, ignoreUnmapped, missing, sortMode, nestedPath, nestedFilter);
                 } else {
@@ -144,14 +152,18 @@ public class SortParseElement implements SearchParseElement {
                                     missing = parser.textOrNull();
                                 } else if ("ignore_unmapped".equals(innerJsonName) || "ignoreUnmapped".equals(innerJsonName)) {
                                     ignoreUnmapped = parser.booleanValue();
-                                } else if ("sort_mode".equals(innerJsonName) || "sortMode".equals(innerJsonName)) {
+                                } else if ("mode".equals(innerJsonName)) {
                                     sortMode = SortMode.fromString(parser.text());
                                 } else if ("nested_path".equals(innerJsonName) || "nestedPath".equals(innerJsonName)) {
                                     nestedPath = parser.text();
+                                } else {
+                                    throw new ElasticSearchIllegalArgumentException("sort option [" + innerJsonName + "] not supported");
                                 }
                             } else if (token == XContentParser.Token.START_OBJECT) {
                                 if ("nested_filter".equals(innerJsonName) || "nestedFilter".equals(innerJsonName)) {
                                     nestedFilter = context.queryParserService().parseInnerFilter(parser);
+                                } else {
+                                    throw new ElasticSearchIllegalArgumentException("sort option [" + innerJsonName + "] not supported");
                                 }
                             }
                         }

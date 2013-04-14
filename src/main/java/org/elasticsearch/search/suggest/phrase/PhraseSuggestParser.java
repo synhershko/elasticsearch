@@ -18,23 +18,6 @@
  */
 package org.elasticsearch.search.suggest.phrase;
 
-/*
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
 import java.io.IOException;
 
 import org.apache.lucene.analysis.Analyzer;
@@ -44,7 +27,7 @@ import org.elasticsearch.ElasticSearchIllegalArgumentException;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.common.xcontent.XContentParser.Token;
 import org.elasticsearch.index.analysis.ShingleTokenFilterFactory;
-import org.elasticsearch.search.internal.SearchContext;
+import org.elasticsearch.index.mapper.MapperService;
 import org.elasticsearch.search.suggest.SuggestContextParser;
 import org.elasticsearch.search.suggest.SuggestUtils;
 import org.elasticsearch.search.suggest.SuggestionSearchContext;
@@ -54,7 +37,7 @@ public final class PhraseSuggestParser implements SuggestContextParser {
 
     private final PhraseSuggester suggester = new PhraseSuggester();
 
-    public SuggestionSearchContext.SuggestionContext parse(XContentParser parser, SearchContext context) throws IOException {
+    public SuggestionSearchContext.SuggestionContext parse(XContentParser parser, MapperService mapperService) throws IOException {
         PhraseSuggestionContext suggestion = new PhraseSuggestionContext(suggester);
         XContentParser.Token token;
         String fieldName = null;
@@ -63,8 +46,8 @@ public final class PhraseSuggestParser implements SuggestContextParser {
             if (token == XContentParser.Token.FIELD_NAME) {
                 fieldName = parser.currentName();
             } else if (token.isValue()) {
-                if (!SuggestUtils.parseSuggestContext(parser, context, fieldName, suggestion)) {
-                    if ("real_word_error_likelihood".equals(fieldName)) {
+                if (!SuggestUtils.parseSuggestContext(parser, mapperService, fieldName, suggestion)) {
+                    if ("real_word_error_likelihood".equals(fieldName) || "realWorldErrorLikelihood".equals(fieldName)) {
                         suggestion.setRealWordErrorLikelihood(parser.floatValue());
                         if (suggestion.realworldErrorLikelyhood() <= 0.0) {
                             throw new ElasticSearchIllegalArgumentException("real_word_error_likelihood must be > 0.0");
@@ -76,25 +59,25 @@ public final class PhraseSuggestParser implements SuggestContextParser {
                         }
                     } else if ("separator".equals(fieldName)) {
                         suggestion.setSeparator(new BytesRef(parser.text()));
-                    } else if ("max_errors".equals(fieldName)) {
+                    } else if ("max_errors".equals(fieldName) || "maxErrors".equals(fieldName)) {
                         suggestion.setMaxErrors(parser.floatValue());
                         if (suggestion.maxErrors() <= 0.0) {
                             throw new ElasticSearchIllegalArgumentException("max_error must be > 0.0");
                         }
-                    } else if ("gram_size".equals(fieldName)) {
+                    } else if ("gram_size".equals(fieldName) || "gramSize".equals(fieldName)) {
                         suggestion.setGramSize(parser.intValue());
                         if (suggestion.gramSize() < 1) {
                             throw new ElasticSearchIllegalArgumentException("gram_size must be >= 1");
                         }
                         gramSizeSet = true;
-                    } else if ("force_unigrams".equals(fieldName)) {
+                    } else if ("force_unigrams".equals(fieldName) || "forceUnigrams".equals(fieldName)) {
                         suggestion.setRequireUnigram(parser.booleanValue());
                     } else {
                         throw new ElasticSearchIllegalArgumentException("suggester[phrase] doesn't support field [" + fieldName + "]");
                     }
                 }
             } else if (token == Token.START_ARRAY) {
-                if ("direct_generator".equals(fieldName)) {
+                if ("direct_generator".equals(fieldName) || "directGenerator".equals(fieldName)) {
                     // for now we only have a single type of generators
                     while ((token = parser.nextToken()) == Token.START_OBJECT) {
                         PhraseSuggestionContext.DirectCandidateGenerator generator = new PhraseSuggestionContext.DirectCandidateGenerator();
@@ -103,10 +86,10 @@ public final class PhraseSuggestParser implements SuggestContextParser {
                                 fieldName = parser.currentName();
                             }
                             if (token.isValue()) {
-                                parseCandidateGenerator(parser, context, fieldName, generator);
+                                parseCandidateGenerator(parser, mapperService, fieldName, generator);
                             }
                         }
-                        verifyGenerator(context, generator);
+                        verifyGenerator(generator);
                         suggestion.addGenerator(generator);
                     }
                 } else {
@@ -124,11 +107,11 @@ public final class PhraseSuggestParser implements SuggestContextParser {
         }
         
         if (suggestion.model() == null) {
-            suggestion.setModel(LaplaceScorer.FACTORY);
+            suggestion.setModel(StupidBackoffScorer.FACTORY);
         }
         
         if (!gramSizeSet || suggestion.generators().isEmpty()) {
-            final ShingleTokenFilterFactory.Factory shingleFilterFactory = SuggestUtils.getShingleFilterFactory(suggestion.getAnalyzer() == null ? context.mapperService().fieldSearchAnalyzer(suggestion.getField()) : suggestion.getAnalyzer()); ;
+            final ShingleTokenFilterFactory.Factory shingleFilterFactory = SuggestUtils.getShingleFilterFactory(suggestion.getAnalyzer() == null ? mapperService.fieldSearchAnalyzer(suggestion.getField()) : suggestion.getAnalyzer()); ;
             if (!gramSizeSet) {
                 // try to detect the shingle size
                 if (shingleFilterFactory != null) {
@@ -167,17 +150,17 @@ public final class PhraseSuggestParser implements SuggestContextParser {
                             fieldName = parser.currentName();
                         }
                         if (token.isValue()) {
-                            if ("trigram_lambda".equals(fieldName)) {
+                            if ("trigram_lambda".equals(fieldName) || "trigramLambda".equals(fieldName)) {
                                 lambdas[0] = parser.doubleValue();
                                 if (lambdas[0] < 0) {
                                     throw new ElasticSearchIllegalArgumentException("trigram_lambda must be positive");
                                 }
-                            } else if ("bigram_lambda".equals(fieldName)) {
+                            } else if ("bigram_lambda".equals(fieldName) || "bigramLambda".equals(fieldName)) {
                                 lambdas[1] = parser.doubleValue();
                                 if (lambdas[1] < 0) {
                                     throw new ElasticSearchIllegalArgumentException("bigram_lambda must be positive");
                                 }
-                            } else if ("unigram_lambda".equals(fieldName)) {
+                            } else if ("unigram_lambda".equals(fieldName) || "unigramLambda".equals(fieldName)) {
                                 lambdas[2] = parser.doubleValue();
                                 if (lambdas[2] < 0) {
                                     throw new ElasticSearchIllegalArgumentException("unigram_lambda must be positive");
@@ -224,7 +207,7 @@ public final class PhraseSuggestParser implements SuggestContextParser {
                         }
                     });
 
-                } else if ("stupid_backoff".equals(fieldName)) {
+                } else if ("stupid_backoff".equals(fieldName) || "stupidBackoff".equals(fieldName)) {
                     ensureNoSmoothing(suggestion);
                     double theDiscount = 0.4;
                     while ((token = parser.nextToken()) != Token.END_OBJECT) {
@@ -257,14 +240,14 @@ public final class PhraseSuggestParser implements SuggestContextParser {
         }
     }
 
-    private void verifyGenerator(SearchContext context, PhraseSuggestionContext.DirectCandidateGenerator suggestion) {
+    private void verifyGenerator(PhraseSuggestionContext.DirectCandidateGenerator suggestion) {
         // Verify options and set defaults
         if (suggestion.field() == null) {
             throw new ElasticSearchIllegalArgumentException("The required field option is missing");
         }
     }
 
-    private void parseCandidateGenerator(XContentParser parser, SearchContext context, String fieldName,
+    private void parseCandidateGenerator(XContentParser parser, MapperService mapperService, String fieldName,
             PhraseSuggestionContext.DirectCandidateGenerator generator) throws IOException {
         if (!SuggestUtils.parseDirectSpellcheckerSettings(parser, fieldName, generator)) {
             if ("field".equals(fieldName)) {
@@ -273,14 +256,14 @@ public final class PhraseSuggestParser implements SuggestContextParser {
                 generator.size(parser.intValue());
             } else if ("pre_filter".equals(fieldName) || "preFilter".equals(fieldName)) {
                 String analyzerName = parser.text();
-                Analyzer analyzer = context.mapperService().analysisService().analyzer(analyzerName);
+                Analyzer analyzer = mapperService.analysisService().analyzer(analyzerName);
                 if (analyzer == null) {
                     throw new ElasticSearchIllegalArgumentException("Analyzer [" + analyzerName + "] doesn't exists");
                 }
                 generator.preFilter(analyzer);
             } else if ("post_filter".equals(fieldName) || "postFilter".equals(fieldName)) {
                 String analyzerName = parser.text();
-                Analyzer analyzer = context.mapperService().analysisService().analyzer(analyzerName);
+                Analyzer analyzer = mapperService.analysisService().analyzer(analyzerName);
                 if (analyzer == null) {
                     throw new ElasticSearchIllegalArgumentException("Analyzer [" + analyzerName + "] doesn't exists");
                 }
