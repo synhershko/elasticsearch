@@ -253,7 +253,7 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
             try {
                 // commit on a just opened writer will commit even if there are no changes done to it
                 // we rely on that for the commit data translog id key
-                if (DirectoryReader.indexExists(store.directory())) {
+                if (Lucene.indexExists(store.directory())) {
                     Map<String, String> commitUserData = Lucene.readSegmentInfos(store.directory()).getUserData();
                     if (commitUserData.containsKey(Translog.TRANSLOG_ID_KEY)) {
                         translogIdGenerator.set(Long.parseLong(commitUserData.get(Translog.TRANSLOG_ID_KEY)));
@@ -333,6 +333,8 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
                     AtomicReaderContext readerContext = readers.get(i);
                     UidField.DocIdAndVersion docIdAndVersion = UidField.loadDocIdAndVersion(readerContext, get.uid());
                     if (docIdAndVersion != null && docIdAndVersion.docId != Lucene.NO_DOC) {
+                        // note, we don't release the searcher here, since it will be released as part of the external
+                        // API usage, since it still needs it to load data...
                         return new GetResult(searcher, docIdAndVersion);
                     }
                 }
@@ -1173,6 +1175,8 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
                     segment.search = true;
                     segment.docCount = reader.reader().numDocs();
                     segment.delDocCount = reader.reader().numDeletedDocs();
+                    segment.version = info.info.getVersion();
+                    segment.compound = info.info.getUseCompoundFile();
                     try {
                         segment.sizeInBytes = info.sizeInBytes();
                     } catch (IOException e) {
@@ -1195,6 +1199,8 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
                         segment.committed = true;
                         segment.docCount = info.info.getDocCount();
                         segment.delDocCount = info.getDelCount();
+                        segment.version = info.info.getVersion();
+                        segment.compound = info.info.getUseCompoundFile();
                         try {
                             segment.sizeInBytes = info.sizeInBytes();
                         } catch (IOException e) {
@@ -1211,7 +1217,7 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
             Arrays.sort(segmentsArr, new Comparator<Segment>() {
                 @Override
                 public int compare(Segment o1, Segment o2) {
-                    return (int) (o1.generation() - o2.generation());
+                    return (int) (o1.getGeneration() - o2.getGeneration());
                 }
             });
 
@@ -1318,7 +1324,7 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
                 logger.warn("shard is locked, releasing lock");
                 IndexWriter.unlock(store.directory());
             }
-            boolean create = !DirectoryReader.indexExists(store.directory());
+            boolean create = !Lucene.indexExists(store.directory());
             IndexWriterConfig config = new IndexWriterConfig(Lucene.VERSION, analysisService.defaultIndexAnalyzer());
             config.setOpenMode(create ? IndexWriterConfig.OpenMode.CREATE : IndexWriterConfig.OpenMode.APPEND);
             config.setIndexDeletionPolicy(deletionPolicy);

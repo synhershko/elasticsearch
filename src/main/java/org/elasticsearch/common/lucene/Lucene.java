@@ -22,6 +22,7 @@ package org.elasticsearch.common.lucene;
 import org.apache.lucene.analysis.core.KeywordAnalyzer;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.index.*;
+import org.apache.lucene.index.SegmentInfos.FindSegmentsFile;
 import org.apache.lucene.search.*;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.BytesRef;
@@ -34,6 +35,7 @@ import org.elasticsearch.index.analysis.AnalyzerScope;
 import org.elasticsearch.index.analysis.NamedAnalyzer;
 import org.elasticsearch.index.fielddata.IndexFieldData;
 
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.lang.reflect.Field;
 
@@ -42,7 +44,7 @@ import java.lang.reflect.Field;
  */
 public class Lucene {
 
-    public static final Version VERSION = Version.LUCENE_41;
+    public static final Version VERSION = Version.LUCENE_42;
     public static final Version ANALYZER_VERSION = VERSION;
     public static final Version QUERYPARSER_VERSION = VERSION;
 
@@ -56,6 +58,9 @@ public class Lucene {
     public static Version parseVersion(@Nullable String version, Version defaultVersion, ESLogger logger) {
         if (version == null) {
             return defaultVersion;
+        }
+        if ("4.2".equals(version)) {
+            return Version.LUCENE_42;
         }
         if ("4.1".equals(version)) {
             return Version.LUCENE_41;
@@ -371,5 +376,9 @@ public class Lucene {
 
     private Lucene() {
 
+    }
+    
+    public static final boolean indexExists(final Directory directory) {
+        return DirectoryReader.indexExists(directory);
     }
 }
