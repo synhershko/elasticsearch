@@ -19,14 +19,18 @@
 
 package org.elasticsearch.test.integration.search.query;
 
+import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.action.admin.indices.create.CreateIndexResponse;
 import org.elasticsearch.action.search.SearchPhaseExecutionException;
 import org.elasticsearch.action.search.SearchResponse;
+import org.elasticsearch.action.search.SearchType;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.common.Priority;
 import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.index.query.*;
 import org.elasticsearch.index.query.CommonTermsQueryBuilder.Operator;
+import org.elasticsearch.index.query.MatchQueryBuilder.Type;
 import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.search.facet.FacetBuilders;
 import org.elasticsearch.test.integration.AbstractNodesTests;
@@ -34,6 +38,7 @@ import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
+import java.io.IOException;
 import java.util.Arrays;
 
 import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
@@ -41,6 +46,7 @@ import static org.elasticsearch.index.query.FilterBuilders.*;
 import static org.elasticsearch.index.query.QueryBuilders.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.anyOf;
+import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.equalTo;
 import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.fail;
@@ -500,6 +506,35 @@ public class SimpleQueryTests extends AbstractNodesTests {
         assertThat("Failures " + Arrays.toString(searchResponse.getShardFailures()), searchResponse.getShardFailures().length, equalTo(0));
         assertThat(searchResponse.getHits().totalHits(), equalTo(1l));
     }
+    
+    @Test
+    public void testMatchQueryNumeric() throws Exception {
+        try {
+            client.admin().indices().prepareDelete("test").execute().actionGet();
+        } catch (Exception e) {
+            // ignore
+        }
+
+        client.admin().indices().prepareCreate("test").setSettings(ImmutableSettings.settingsBuilder().put("index.number_of_shards", 1)).execute().actionGet();
+
+        client.prepareIndex("test", "type1", "1").setSource("long", 1l, "double", 1.0d).execute().actionGet();
+        client.prepareIndex("test", "type1", "2").setSource("long", 2l,  "double", 2.0d).execute().actionGet();
+        client.prepareIndex("test", "type1", "3").setSource("long", 3l, "double", 3.0d).execute().actionGet();
+        client.admin().indices().prepareRefresh("test").execute().actionGet();
+        SearchResponse searchResponse = client.prepareSearch().setQuery(matchQuery("long", "1")).execute().actionGet();
+        assertThat(searchResponse.getHits().totalHits(), equalTo(1l));
+        assertThat(searchResponse.getHits().getAt(0).id(), equalTo("1"));
+        
+        searchResponse = client.prepareSearch().setQuery(matchQuery("double", "2")).execute().actionGet();
+        assertThat(searchResponse.getHits().totalHits(), equalTo(1l));
+        assertThat(searchResponse.getHits().getAt(0).id(), equalTo("2"));
+        try {
+            searchResponse = client.prepareSearch().setQuery(matchQuery("double", "2 3 4")).execute().actionGet();
+            assert false;
+        } catch (SearchPhaseExecutionException ex) {
+            // number format exception
+        }
+    }
 
     @Test
     public void testMultiMatchQuery() throws Exception {
@@ -658,6 +693,67 @@ public class SimpleQueryTests extends AbstractNodesTests {
         assertThat(searchResponse.getHits().totalHits(), equalTo(2l));
     }
 
+    @Test
+    public void testMultiMatchQueryMinShouldMatch() {
+        try {
+            client.admin().indices().prepareDelete("test").execute().actionGet();
+        } catch (Exception e) {
+            // ignore
+        }
+
+        client.admin().indices().prepareCreate("test").setSettings(ImmutableSettings.settingsBuilder().put("index.number_of_shards", 1)).execute().actionGet();
+        client.prepareIndex("test", "type1", "1").setSource("field1", new String[]{"value1","value2","value3"}).execute().actionGet();
+        client.prepareIndex("test", "type1", "2").setSource("field2", "value1").execute().actionGet();
+        client.admin().indices().prepareRefresh("test").execute().actionGet();
+
+    	MultiMatchQueryBuilder multiMatchQuery = multiMatchQuery("value1 value2 foo", "field1","field2");
+
+    	multiMatchQuery.useDisMax(true);
+    	multiMatchQuery.minimumShouldMatch("70%");
+        SearchResponse searchResponse = client.prepareSearch()
+                .setQuery(multiMatchQuery)
+                .execute().actionGet();
+        assertThat(searchResponse.getHits().totalHits(), equalTo(1l));
+        assertThat(searchResponse.getHits().getHits()[0].id(), equalTo("1"));
+
+        multiMatchQuery.minimumShouldMatch("30%");
+        searchResponse = client.prepareSearch()
+                .setQuery(multiMatchQuery)
+                .execute().actionGet();
+        assertThat(searchResponse.getHits().totalHits(), equalTo(2l));
+        assertThat(searchResponse.getHits().getHits()[0].id(), equalTo("1"));
+        assertThat(searchResponse.getHits().getHits()[1].id(), equalTo("2"));
+
+        multiMatchQuery.useDisMax(false);
+        multiMatchQuery.minimumShouldMatch("70%");
+        searchResponse = client.prepareSearch()
+                .setQuery(multiMatchQuery)
+                .execute().actionGet();
+        assertThat(searchResponse.getHits().totalHits(), equalTo(1l));
+        assertThat(searchResponse.getHits().getHits()[0].id(), equalTo("1"));
+
+        multiMatchQuery.minimumShouldMatch("30%");
+        searchResponse = client.prepareSearch()
+                .setQuery(multiMatchQuery)
+                .execute().actionGet();
+        assertThat(searchResponse.getHits().totalHits(), equalTo(2l));
+        assertThat(searchResponse.getHits().getHits()[0].id(), equalTo("1"));
+        assertThat(searchResponse.getHits().getHits()[1].id(), equalTo("2"));
+
+        multiMatchQuery = multiMatchQuery("value1 value2 bar", "field1");
+        multiMatchQuery.minimumShouldMatch("100%");
+        searchResponse = client.prepareSearch()
+                .setQuery(multiMatchQuery)
+                .execute().actionGet();
+        assertThat(searchResponse.getHits().totalHits(), equalTo(0l));
+
+        multiMatchQuery.minimumShouldMatch("70%");
+        searchResponse = client.prepareSearch()
+                .setQuery(multiMatchQuery)
+                .execute().actionGet();
+        assertThat(searchResponse.getHits().totalHits(), equalTo(1l));
+        assertThat(searchResponse.getHits().getHits()[0].id(), equalTo("1"));
+    }
     @Test
     public void testFuzzyQueryString() {
         client.admin().indices().prepareDelete().execute().actionGet();
@@ -1142,6 +1238,53 @@ public class SimpleQueryTests extends AbstractNodesTests {
         ).execute().actionGet();
 
         assertThat(response.getHits().totalHits(), equalTo(4l));
+    }
+    
+    @Test // see #2926
+    public void testMustNot() throws ElasticSearchException, IOException {
+        client.admin().indices().prepareDelete().execute().actionGet();
+        client.admin().indices().prepareCreate("test").setSettings(
+                ImmutableSettings.settingsBuilder()
+                        .put("index.number_of_shards", 2)
+                        .put("index.number_of_replicas", 0)
+        )
+                .execute().actionGet();
+
+        client.prepareIndex("test", "test", "1").setSource(jsonBuilder().startObject()
+                .field("description", "foo other anything bar")
+                .endObject())
+                .execute().actionGet();
+
+        client.prepareIndex("test", "test", "2").setSource(jsonBuilder().startObject()
+                .field("description", "foo other anything")
+                .endObject())
+                .execute().actionGet();
+
+        client.prepareIndex("test", "test", "3").setSource(jsonBuilder().startObject()
+                .field("description", "foo other")
+                .endObject())
+                .execute().actionGet();
+
+        client.prepareIndex("test", "test", "4").setSource(jsonBuilder().startObject()
+                .field("description", "foo")
+                .endObject())
+                .execute().actionGet();
+        
+        client.admin().indices().prepareRefresh().execute().actionGet();
+        
+        SearchResponse response = client.prepareSearch("test")
+                .setQuery(QueryBuilders.matchAllQuery())
+                .setSearchType(SearchType.DFS_QUERY_THEN_FETCH)
+                .execute().actionGet();
+        assertThat(response.getShardFailures().length, equalTo(0));
+        assertThat(response.getHits().totalHits(), equalTo(4l));
+        
+        response = client.prepareSearch("test").setQuery(
+                QueryBuilders.boolQuery()
+                        .mustNot(QueryBuilders.matchQuery("description", "anything").type(Type.BOOLEAN))
+        ).setSearchType(SearchType.DFS_QUERY_THEN_FETCH).execute().actionGet();
+        assertThat(response.getShardFailures().length, equalTo(0));
+        assertThat(response.getHits().totalHits(), equalTo(2l));
     }
 
 }

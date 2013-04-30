@@ -128,7 +128,7 @@ public class HighlightPhase extends AbstractComponent implements FetchSubPhase {
 
             for (String fieldName : fieldNamesToHighlight) {
 
-                FieldMapper mapper = documentMapper.mappers().smartNameFieldMapper(fieldName);
+                FieldMapper<?> mapper = documentMapper.mappers().smartNameFieldMapper(fieldName);
                 if (mapper == null) {
                     MapperService.SmartNameFieldMappers fullMapper = mapperService.smartName(fieldName);
                     if (fullMapper == null || !fullMapper.hasDocMapper()) {
@@ -277,25 +277,21 @@ public class HighlightPhase extends AbstractComponent implements FetchSubPhase {
                                 fragListBuilder = new SingleFragListBuilder();
 
                                 if (mapper.fieldType().stored()) {
-                                    fragmentsBuilder = new XSimpleFragmentsBuilder(field.preTags(), field.postTags(), boundaryScanner);
+                                    fragmentsBuilder = new SimpleFragmentsBuilder(field.preTags(), field.postTags(), boundaryScanner);
                                 } else {
                                     fragmentsBuilder = new SourceSimpleFragmentsBuilder(mapper, context, field.preTags(), field.postTags(), boundaryScanner);
                                 }
                             } else {
-                                if (field.fragmentOffset() == -1)
-                                    fragListBuilder = new SimpleFragListBuilder();
-                                else
-                                    fragListBuilder = new SimpleFragListBuilder(field.fragmentOffset());
-
+                                fragListBuilder = field.fragmentOffset() == -1 ? new XSimpleFragListBuilder() : new XSimpleFragListBuilder(field.fragmentOffset());
                                 if (field.scoreOrdered()) {
                                     if (mapper.fieldType().stored()) {
-                                        fragmentsBuilder = new XScoreOrderFragmentsBuilder(field.preTags(), field.postTags(), boundaryScanner);
+                                        fragmentsBuilder = new ScoreOrderFragmentsBuilder(field.preTags(), field.postTags(), boundaryScanner);
                                     } else {
                                         fragmentsBuilder = new SourceScoreOrderFragmentsBuilder(mapper, context, field.preTags(), field.postTags(), boundaryScanner);
                                     }
                                 } else {
                                     if (mapper.fieldType().stored()) {
-                                        fragmentsBuilder = new XSimpleFragmentsBuilder(field.preTags(), field.postTags(), boundaryScanner);
+                                        fragmentsBuilder = new SimpleFragmentsBuilder(field.preTags(), field.postTags(), boundaryScanner);
                                     } else {
                                         fragmentsBuilder = new SourceSimpleFragmentsBuilder(mapper, context, field.preTags(), field.postTags(), boundaryScanner);
                                     }

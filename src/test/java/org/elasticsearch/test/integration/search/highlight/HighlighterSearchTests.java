@@ -19,6 +19,12 @@
 
 package org.elasticsearch.test.integration.search.highlight;
 
+import org.apache.lucene.index.Term;
+import org.apache.lucene.search.BooleanQuery;
+import org.apache.lucene.search.PhraseQuery;
+import org.apache.lucene.search.TermQuery;
+import org.apache.lucene.search.BooleanClause.Occur;
+import org.apache.lucene.search.vectorhighlight.FieldQuery;
 import org.elasticsearch.ElasticSearchException;
 import org.elasticsearch.action.search.SearchPhaseExecutionException;
 import org.elasticsearch.action.search.SearchResponse;
@@ -31,6 +37,7 @@ import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.index.query.FilterBuilders;
 import org.elasticsearch.index.query.MatchQueryBuilder;
+import org.elasticsearch.index.query.MatchQueryBuilder.Type;
 import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.indices.IndexMissingException;
 import org.elasticsearch.rest.RestStatus;
@@ -38,6 +45,7 @@ import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.search.highlight.HighlightBuilder;
 import org.elasticsearch.test.integration.AbstractNodesTests;
+import org.hamcrest.Matcher;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
@@ -54,6 +62,10 @@ import static org.elasticsearch.search.builder.SearchSourceBuilder.highlight;
 import static org.elasticsearch.search.builder.SearchSourceBuilder.searchSource;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.greaterThan;
+import static org.hamcrest.Matchers.notNullValue;
+
+
 import static org.hamcrest.Matchers.instanceOf;
 import static org.testng.Assert.fail;
 
@@ -80,7 +92,153 @@ public class HighlighterSearchTests extends AbstractNodesTests {
     protected Client getClient() {
         return client("server1");
     }
+    
+    
+    @Test
+    public void testNgramHighlighting() throws ElasticSearchException, IOException {
+        try {
+            client.admin().indices().prepareDelete("test").execute().actionGet();
+        } catch (Exception e) {
+            // ignore
+        }
+        
+        client.admin().indices().prepareCreate("test")
+        .addMapping("test", jsonBuilder()
+                .startObject()
+                    .startObject("test")
+                        .startObject("properties")
+                            .startObject("name")
+                                .field("type", "string")
+                                .field("index_analyzer", "name_index_analyzer")
+                                .field("search_analyzer", "name_search_analyzer")
+                                .field("term_vector", "with_positions_offsets")
+                            .endObject()
+                            .startObject("name2")
+                                .field("type", "string")
+                                .field("index_analyzer", "name2_index_analyzer")
+                                .field("search_analyzer", "name_search_analyzer")
+                                .field("term_vector", "with_positions_offsets")
+                            .endObject()
+                        .endObject()
+                    .endObject()
+                .endObject())
+        .setSettings(ImmutableSettings.settingsBuilder()
+                .put("index.number_of_shards", 2)
+                .put("analysis.filter.my_ngram.max_gram", 20)
+                .put("analysis.filter.my_ngram.min_gram", 1)
+                .put("analysis.filter.my_ngram.type", "ngram")
+                .put("analysis.tokenizer.my_ngramt.max_gram", 20)
+                .put("analysis.tokenizer.my_ngramt.min_gram", 1)
+                .put("analysis.tokenizer.my_ngramt.type", "ngram")
+                .put("analysis.analyzer.name_index_analyzer.tokenizer", "my_ngramt")
+                .put("analysis.analyzer.name2_index_analyzer.tokenizer", "whitespace")
+                .put("analysis.analyzer.name2_index_analyzer.filter", "my_ngram")
+                .put("analysis.analyzer.name_search_analyzer.tokenizer", "whitespace"))
+        .execute().actionGet();
+        client.prepareIndex("test", "test", "1")
+            .setSource(XContentFactory.jsonBuilder()
+                    .startObject()
+                        .field("name", "logicacmg ehemals avinci - the know how company")
+                        .field("name2", "logicacmg ehemals avinci - the know how company")
+                    .endObject())
+            .setRefresh(true).execute().actionGet();
+        SearchResponse search = client.prepareSearch().setQuery(matchQuery("name", "logica m")).addHighlightedField("name").execute().actionGet();
+        assertHighlight(search, 0, "name", 0, equalTo("<em>logica</em>c<em>m</em>g ehe<em>m</em>als avinci - the know how co<em>m</em>pany"));
+        
+        search = client.prepareSearch().setQuery(matchQuery("name", "logica ma")).addHighlightedField("name").execute()
+                .actionGet();
+        assertHighlight(search, 0, "name", 0, equalTo("<em>logica</em>cmg ehe<em>ma</em>ls avinci - the know how company"));
 
+        search = client.prepareSearch().setQuery(matchQuery("name", "logica")).addHighlightedField("name").execute().actionGet();
+        assertHighlight(search, 0, "name", 0, equalTo("<em>logica</em>cmg ehemals avinci - the know how company"));
+        
+      
+        
+        search = client.prepareSearch().setQuery(matchQuery("name2", "logica m")).addHighlightedField("name2").execute().actionGet();
+        assertHighlight(search, 0, "name2", 0, equalTo("<em>logicacmg</em> <em>ehemals</em> avinci - the know how <em>company</em>"));
+        
+        search = client.prepareSearch().setQuery(matchQuery("name2", "logica ma")).addHighlightedField("name2").execute()
+                .actionGet();
+        assertHighlight(search, 0, "name2", 0, equalTo("<em>logicacmg</em> <em>ehemals</em> avinci - the know how company"));
+
+        search = client.prepareSearch().setQuery(matchQuery("name2", "logica")).addHighlightedField("name2").execute().actionGet();
+        assertHighlight(search, 0, "name2", 0, equalTo("<em>logicacmg</em> ehemals avinci - the know how company"));
+
+        
+    }
+    
+    public void assertHighlight(SearchResponse resp, int hit, String field, int fragment, Matcher<String> matcher) {
+        assertThat(resp.getShardFailures().length, equalTo(0));
+        assertThat(resp.getHits().hits().length, greaterThan(hit));
+        assertThat(resp.getHits().hits()[hit].getHighlightFields().get(field), notNullValue());
+        assertThat(resp.getHits().hits()[hit].getHighlightFields().get(field).fragments().length, greaterThan(fragment));
+        assertThat(resp.getHits().hits()[hit].highlightFields().get(field).fragments()[fragment].string(),
+                matcher);
+    }
+
+    
+    @Test
+    public void testEnsureNoNegativeOffsets() throws Exception {
+        try {
+            client.admin().indices().prepareDelete("test").execute().actionGet();
+        } catch (Exception e) {
+            // ignore
+        }
+
+        client.admin().indices().prepareCreate("test").setSettings(ImmutableSettings.settingsBuilder().put("index.number_of_shards", 2))
+                .addMapping("type1", jsonBuilder().startObject().startObject("type1").startObject("properties")
+                        // we don't store title, now lets see if it works...
+                        .startObject("no_long_term").field("type", "string").field("store", "no").field("term_vector", "with_positions_offsets").endObject()
+                        .startObject("long_term").field("type", "string").field("store", "no").field("term_vector", "with_positions_offsets").endObject()
+                        .endObject().endObject().endObject())
+                .execute().actionGet();
+
+
+        client.prepareIndex("test", "type1", "1")
+                .setSource(XContentFactory.jsonBuilder().startObject()
+                        .startArray("no_long_term")
+                        .value("This is a test where foo is highlighed and should be highlighted")
+                        .endArray()
+                        .startArray("long_term")
+                        .value("This is a test thisisaverylongwordandmakessurethisfails where foo is highlighed and should be highlighted")
+                        .endArray()
+                        .endObject())
+                .setRefresh(true).execute().actionGet();
+
+
+        SearchResponse search = client.prepareSearch()
+                .setQuery(matchQuery("long_term", "thisisaverylongwordandmakessurethisfails foo highlighed"))
+                .addHighlightedField("long_term", 18, 1)
+                .execute().actionGet();
+
+        assertThat(search.getHits().totalHits(), equalTo(1l));
+        assertThat(search.getHits().hits().length, equalTo(1));
+
+        assertThat(search.getHits().hits()[0].highlightFields().get("long_term").fragments().length, equalTo(1));
+        assertThat(search.getHits().hits()[0].highlightFields().get("long_term").fragments()[0].string(), equalTo("<em>thisisaverylongwordandmakessurethisfails</em>"));
+        
+        
+        search = client.prepareSearch()
+                .setQuery(matchQuery("no_long_term", "test foo highlighed").type(Type.PHRASE).slop(3))
+                .addHighlightedField("no_long_term", 18, 1).setHighlighterPostTags("</b>").setHighlighterPreTags("<b>")
+                .execute().actionGet();
+        assertThat(search.getHits().totalHits(), equalTo(1l));
+        assertThat(search.getHits().hits().length, equalTo(1));
+        assertThat(search.getHits().hits()[0].highlightFields().size(), equalTo(0));
+       
+
+        search = client.prepareSearch()
+                .setQuery(matchQuery("no_long_term", "test foo highlighed").type(Type.PHRASE).slop(3))
+                .addHighlightedField("no_long_term", 30, 1).setHighlighterPostTags("</b>").setHighlighterPreTags("<b>")
+                .execute().actionGet();
+        
+        assertThat(search.getHits().totalHits(), equalTo(1l));
+        assertThat(search.getHits().hits().length, equalTo(1));
+
+        assertThat(search.getHits().hits()[0].highlightFields().get("no_long_term").fragments().length, equalTo(1));
+        assertThat(search.getHits().hits()[0].highlightFields().get("no_long_term").fragments()[0].string(), equalTo("a <b>test</b> where <b>foo</b> is <b>highlighed</b> and"));
+    }
+    
     @Test
     public void testSourceLookupHighlightingUsingPlainHighlighter() throws Exception {
         try {
@@ -88,6 +246,8 @@ public class HighlighterSearchTests extends AbstractNodesTests {
         } catch (Exception e) {
             // ignore
         }
+        
+        
 
         client.admin().indices().prepareCreate("test").setSettings(ImmutableSettings.settingsBuilder().put("index.number_of_shards", 2))
                 .addMapping("type1", jsonBuilder().startObject().startObject("type1").startObject("properties")
