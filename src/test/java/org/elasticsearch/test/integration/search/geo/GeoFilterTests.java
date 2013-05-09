@@ -25,6 +25,7 @@ import static org.elasticsearch.index.query.FilterBuilders.geoDistanceFilter;
 import static org.elasticsearch.index.query.QueryBuilders.fieldQuery;
 import static org.elasticsearch.index.query.QueryBuilders.filteredQuery;
 import static org.elasticsearch.index.query.QueryBuilders.matchAllQuery;
+import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.anyOf;
 import static org.hamcrest.Matchers.equalTo;
@@ -49,7 +50,6 @@ import org.elasticsearch.common.geo.ShapeBuilder;
 import org.elasticsearch.common.geo.ShapeBuilder.MultiPolygonBuilder;
 import org.elasticsearch.common.geo.ShapeBuilder.PolygonBuilder;
 import org.elasticsearch.common.io.Streams;
-import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.index.query.FilterBuilders;
 import org.elasticsearch.search.SearchHit;
@@ -57,8 +57,6 @@ import org.elasticsearch.test.integration.AbstractNodesTests;
 
 import org.apache.lucene.spatial.prefix.RecursivePrefixTreeStrategy;
 import org.apache.lucene.spatial.prefix.tree.GeohashPrefixTree;
-import org.apache.lucene.spatial.prefix.tree.Node;
-import org.apache.lucene.spatial.prefix.tree.QuadPrefixTree;
 import org.apache.lucene.spatial.query.SpatialArgs;
 import org.apache.lucene.spatial.query.SpatialOperation;
 import org.apache.lucene.spatial.query.UnsupportedSpatialOperation;
@@ -235,11 +233,9 @@ public class GeoFilterTests extends AbstractNodesTests {
     public void testShapeRelations() throws Exception {
 
         assert intersectSupport: "Intersect relation is not supported";
-//      assert disjointSupport: "Disjoint relation is not supported";
-//      assert withinSupport: "within relation is not supported";
+        assert disjointSupport: "Disjoint relation is not supported";
+        assert withinSupport: "within relation is not supported";
 
-        assert !disjointSupport: "Disjoint relation is now supported";
-        assert !withinSupport: "within relation is now supported";
 
         String mapping = XContentFactory.jsonBuilder()
                 .startObject()
@@ -281,15 +277,15 @@ public class GeoFilterTests extends AbstractNodesTests {
                 .setQuery(matchAllQuery())
                 .setFilter(FilterBuilders.geoIntersectionFilter("area", ShapeBuilder.newPoint(3, 3)))
                 .execute().actionGet();
-        assertThat(result.getHits().getTotalHits(), equalTo(1L));
-        assertThat(result.getHits().getAt(0).getId(), equalTo("1"));
+        assertHitCount(result, 1);
+        assertFirstHit(result, hasId("1"));
 
         // Point in polygon hole
         result = client.prepareSearch()
                 .setQuery(matchAllQuery())
                 .setFilter(FilterBuilders.geoIntersectionFilter("area", ShapeBuilder.newPoint(4.5, 4.5)))
                 .execute().actionGet();
-        assertThat(result.getHits().getTotalHits(), equalTo(0L));
+        assertHitCount(result, 0);
 
         // by definition the border of a polygon belongs to the inner
         // so the border of a polygons hole also belongs to the inner
@@ -300,16 +296,16 @@ public class GeoFilterTests extends AbstractNodesTests {
                 .setQuery(matchAllQuery())
                 .setFilter(FilterBuilders.geoIntersectionFilter("area", ShapeBuilder.newPoint(10.0, 5.0)))
                 .execute().actionGet();
-        assertThat(result.getHits().getTotalHits(), equalTo(1L));
-        assertThat(result.getHits().getAt(0).getId(), equalTo("1"));
+        assertHitCount(result, 1);
+        assertFirstHit(result, hasId("1"));
 
         // Point on hole border
         result = client.prepareSearch()
                 .setQuery(matchAllQuery())
                 .setFilter(FilterBuilders.geoIntersectionFilter("area", ShapeBuilder.newPoint(5.0, 2.0)))
                 .execute().actionGet();
-        assertThat(result.getHits().getTotalHits(), equalTo(1L));
-        assertThat(result.getHits().getAt(0).getId(), equalTo("1"));
+        assertHitCount(result, 1);
+        assertFirstHit(result, hasId("1"));
 
         if(disjointSupport) {
             // Point not in polygon
@@ -317,15 +313,15 @@ public class GeoFilterTests extends AbstractNodesTests {
                     .setQuery(matchAllQuery())
                     .setFilter(FilterBuilders.geoDisjointFilter("area", ShapeBuilder.newPoint(3, 3)))
                     .execute().actionGet();
-            assertThat(result.getHits().getTotalHits(), equalTo(0L));
+            assertHitCount(result, 0);
 
             // Point in polygon hole
             result = client.prepareSearch()
                     .setQuery(matchAllQuery())
                     .setFilter(FilterBuilders.geoDisjointFilter("area", ShapeBuilder.newPoint(4.5, 4.5)))
                     .execute().actionGet();
-            assertThat(result.getHits().getTotalHits(), equalTo(1L));
-            assertThat(result.getHits().getAt(0).getId(), equalTo("1"));
+            assertHitCount(result, 1);
+            assertFirstHit(result, hasId("1"));
         }
 
         // Create a polygon that fills the empty area of the polygon defined above
@@ -345,8 +341,8 @@ public class GeoFilterTests extends AbstractNodesTests {
                 .setQuery(matchAllQuery())
                 .setFilter(FilterBuilders.geoIntersectionFilter("area", ShapeBuilder.newPoint(4.5, 4.5)))
                 .execute().actionGet();
-        assertThat(result.getHits().getTotalHits(), equalTo(1L));
-        assertThat(result.getHits().getAt(0).getId(), equalTo("2"));
+        assertHitCount(result, 1);
+        assertFirstHit(result, hasId("2"));
 
         // Create Polygon with hole and common edge
         PolygonBuilder builder = ShapeBuilder.newPolygon()
@@ -365,7 +361,7 @@ public class GeoFilterTests extends AbstractNodesTests {
                     .setQuery(matchAllQuery())
                     .setFilter(FilterBuilders.geoWithinFilter("area", builder.build()))
                     .execute().actionGet();
-            assertThat(result.getHits().getTotalHits(), equalTo(2L));
+            assertHitCount(result, 2);
         }
 
 /* TODO: fix Polygon builder! It is not possible to cross the lats -180 and 180.
@@ -424,7 +420,7 @@ public class GeoFilterTests extends AbstractNodesTests {
                 .setQuery(fieldQuery("_id", key))
                 .execute().actionGet();
 
-        assertThat(searchResponse.getHits().getTotalHits(), equalTo(1L));
+        assertHitCount(searchResponse, 1);
 
         for (SearchHit hit : searchResponse.getHits()) {
             assertThat(hit.getId(), equalTo(key));
@@ -438,7 +434,7 @@ public class GeoFilterTests extends AbstractNodesTests {
                             .bottomRight(-90, 179.99999))
         ).execute().actionGet();
 
-        assertThat(world.getHits().totalHits(), equalTo(246L));
+        assertHitCount(world, 246);
 
         SearchResponse distance = client.prepareSearch().addField("pin").setQuery(
                 filteredQuery(
@@ -446,7 +442,7 @@ public class GeoFilterTests extends AbstractNodesTests {
                         geoDistanceFilter("pin").distance("425km").point(51.11, 9.851)
                 )).execute().actionGet();
 
-        assertThat(distance.getHits().totalHits(), equalTo(5L));
+        assertHitCount(distance, 5);
         GeoPoint point = new GeoPoint();
         for (SearchHit hit : distance.getHits()) {
             String name = hit.getId();

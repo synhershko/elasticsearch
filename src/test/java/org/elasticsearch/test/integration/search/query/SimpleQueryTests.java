@@ -20,7 +20,6 @@
 package org.elasticsearch.test.integration.search.query;
 
 import org.elasticsearch.ElasticSearchException;
-import org.elasticsearch.action.admin.indices.create.CreateIndexResponse;
 import org.elasticsearch.action.search.SearchPhaseExecutionException;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.search.SearchType;
@@ -44,6 +43,7 @@ import java.util.Arrays;
 import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
 import static org.elasticsearch.index.query.FilterBuilders.*;
 import static org.elasticsearch.index.query.QueryBuilders.*;
+import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.anyOf;
 import static org.hamcrest.Matchers.greaterThan;
@@ -61,6 +61,7 @@ public class SimpleQueryTests extends AbstractNodesTests {
     @BeforeClass
     public void createNodes() throws Exception {
         startNode("node1");
+        startNode("node2");
         client = getClient();
     }
 
@@ -1203,21 +1204,25 @@ public class SimpleQueryTests extends AbstractNodesTests {
                 .execute().actionGet();
 
         client.prepareIndex("test", "type1", "1").setSource(jsonBuilder().startObject()
+                .field("field1", "test1")
                 .field("num_long", 1)
                 .endObject())
                 .execute().actionGet();
 
         client.prepareIndex("test", "type1", "2").setSource(jsonBuilder().startObject()
+                .field("field1", "test1")
                 .field("num_long", 2)
                 .endObject())
                 .execute().actionGet();
 
         client.prepareIndex("test", "type1", "3").setSource(jsonBuilder().startObject()
+                .field("field1", "test2")
                 .field("num_long", 3)
                 .endObject())
                 .execute().actionGet();
 
         client.prepareIndex("test", "type1", "4").setSource(jsonBuilder().startObject()
+                .field("field1", "test2")
                 .field("num_long", 4)
                 .endObject())
                 .execute().actionGet();
@@ -1238,6 +1243,16 @@ public class SimpleQueryTests extends AbstractNodesTests {
         ).execute().actionGet();
 
         assertThat(response.getHits().totalHits(), equalTo(4l));
+
+        // This made #2979 fail!
+        response = client.prepareSearch("test").setFilter(
+                FilterBuilders.boolFilter()
+                        .must(FilterBuilders.termFilter("field1", "test1"))
+                        .should(FilterBuilders.rangeFilter("num_long").from(1).to(2))
+                        .should(FilterBuilders.rangeFilter("num_long").from(3).to(4))
+        ).execute().actionGet();
+
+        assertThat(response.getHits().totalHits(), equalTo(2l));
     }
     
     @Test // see #2926
@@ -1285,6 +1300,159 @@ public class SimpleQueryTests extends AbstractNodesTests {
         ).setSearchType(SearchType.DFS_QUERY_THEN_FETCH).execute().actionGet();
         assertThat(response.getShardFailures().length, equalTo(0));
         assertThat(response.getHits().totalHits(), equalTo(2l));
+    }
+    
+    @Test // see #2994
+    public void testSimpleSpan() throws ElasticSearchException, IOException {
+        client.admin().indices().prepareDelete().execute().actionGet();
+        client.admin().indices().prepareCreate("test").setSettings(
+                ImmutableSettings.settingsBuilder()
+                        .put("index.number_of_shards", 1)
+                        .put("index.number_of_replicas", 0)
+        )
+                .execute().actionGet();
+
+        client.prepareIndex("test", "test", "1").setSource(jsonBuilder().startObject()
+                .field("description", "foo other anything bar")
+                .endObject())
+                .execute().actionGet();
+
+        client.prepareIndex("test", "test", "2").setSource(jsonBuilder().startObject()
+                .field("description", "foo other anything")
+                .endObject())
+                .execute().actionGet();
+
+        client.prepareIndex("test", "test", "3").setSource(jsonBuilder().startObject()
+                .field("description", "foo other")
+                .endObject())
+                .execute().actionGet();
+
+        client.prepareIndex("test", "test", "4").setSource(jsonBuilder().startObject()
+                .field("description", "foo")
+                .endObject())
+                .execute().actionGet();
+        
+        client.admin().indices().prepareRefresh().execute().actionGet();
+        
+        SearchResponse response = client.prepareSearch("test")
+                .setQuery(QueryBuilders.spanOrQuery().clause(QueryBuilders.spanTermQuery("description", "bar")))
+                .execute().actionGet();
+        assertNoFailures(response);
+        assertHitCount(response, 1l);
+        response = client.prepareSearch("test")
+                .setQuery(QueryBuilders.spanOrQuery().clause(QueryBuilders.spanTermQuery("test.description", "bar")))
+                .execute().actionGet();
+        assertNoFailures(response);
+        assertHitCount(response, 1l);
+        
+        response = client.prepareSearch("test").setQuery(
+                QueryBuilders.spanNearQuery()
+                    .clause(QueryBuilders.spanTermQuery("description", "foo"))
+                    .clause(QueryBuilders.spanTermQuery("test.description", "other"))
+                .slop(3)).execute().actionGet();
+        assertNoFailures(response);
+        assertHitCount(response, 3l);
+    }
+    
+    @Test
+    public void testSimpleDFSQuery() throws ElasticSearchException, IOException {
+        
+        client.admin().indices().prepareDelete().execute().actionGet();
+        client.admin().indices().prepareCreate("test").setSettings(
+                ImmutableSettings.settingsBuilder()
+                        .put("index.number_of_shards", 5)
+                        .put("index.number_of_replicas", 0)
+        ).addMapping("s", jsonBuilder()
+                    .startObject()
+                        .startObject("s")
+                            .startObject("_routing")
+                                .field("required", true)
+                                .field("path", "bs")
+                            .endObject()
+                            .startObject("properties")
+                                .startObject("online")
+                                    .field("type", "boolean")
+                                .endObject()
+                                .startObject("ts")
+                                    .field("type", "date")
+                                    .field("ignore_malformed", false)
+                                    .field("format", "dateOptionalTime")
+                                .endObject()
+                                 .startObject("bs")
+                                    .field("type", "string")
+                                    .field("index", "not_analyzed")
+                                .endObject()
+                            .endObject()
+                        .endObject()
+                    .endObject())
+             .addMapping("bs", jsonBuilder()
+                    .startObject()
+                        .startObject("s")
+                            .startObject("properties")
+                                .startObject("online")
+                                    .field("type", "boolean")
+                                .endObject()
+                                .startObject("ts")
+                                    .field("type", "date")
+                                    .field("ignore_malformed", false)
+                                    .field("format", "dateOptionalTime")
+                                .endObject()
+                            .endObject()
+                        .endObject()
+                    .endObject())
+
+
+                .execute().actionGet();
+
+        client.prepareIndex("test", "s", "1").setSource(jsonBuilder().startObject()
+                .field("online", false)
+                .field("bs", "Y")
+                .field("ts", System.currentTimeMillis()- 100)
+                .endObject())
+                .execute().actionGet();
+
+        client.prepareIndex("test", "s", "2").setSource(jsonBuilder().startObject()
+                .field("online", true)
+                .field("bs", "X")
+                .field("ts", System.currentTimeMillis()- 10000000)
+                .endObject())
+                .execute().actionGet();
+
+        client.prepareIndex("test", "bs", "3").setSource(jsonBuilder().startObject()
+                .field("online", false)
+                .field("ts", System.currentTimeMillis()- 100)
+                .endObject())
+                .execute().actionGet();
+
+        client.prepareIndex("test", "bs", "4").setSource(jsonBuilder().startObject()
+                .field("online", true)
+                .field("ts", System.currentTimeMillis() - 123123)
+                .endObject())
+                .execute().actionGet();
+        
+        client.admin().indices().prepareRefresh().execute().actionGet();
+        SearchResponse response = client.prepareSearch("test")
+                .setSearchType(SearchType.DFS_QUERY_THEN_FETCH)
+                .setQuery(
+                    QueryBuilders.boolQuery()
+                        .must(QueryBuilders.termQuery("online", true))
+                        .must(QueryBuilders.boolQuery()
+                            .should(QueryBuilders.boolQuery()
+                                .must(QueryBuilders.rangeQuery("ts").lt(System.currentTimeMillis() - (15 * 1000)))
+                                .must(QueryBuilders.termQuery("_type", "bs"))
+                                )
+                            .should(QueryBuilders.boolQuery()
+                                .must(QueryBuilders.rangeQuery("ts").lt(System.currentTimeMillis() - (15 * 1000)))
+                                .must(QueryBuilders.termQuery("_type", "s"))
+                            )
+                        )
+                )
+                .setVersion(true)
+                .setFrom(0).setSize(100).setExplain(true)
+                .execute()
+                .actionGet();
+        assertNoFailures(response);
+        
     }
 
 }

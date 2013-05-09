@@ -19,6 +19,7 @@
 
 package org.elasticsearch.test.unit.index.query;
 
+import com.google.common.collect.Lists;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.queries.BoostingQuery;
 import org.apache.lucene.queries.FilterClause;
@@ -1194,6 +1195,23 @@ public class SimpleIndexQueryParserTests {
     }
 
     @Test
+    public void testTermsQueryBuilder() throws IOException {
+      IndexQueryParserService queryParser = queryParser();
+      Query parsedQuery = queryParser.parse(termsQuery("name.first", Lists.newArrayList("shay", "test"))).query();
+      assertThat(parsedQuery, instanceOf(BooleanQuery.class));
+      BooleanQuery booleanQuery = (BooleanQuery) parsedQuery;
+      BooleanClause[] clauses = booleanQuery.getClauses();
+
+      assertThat(clauses.length, equalTo(2));
+
+      assertThat(((TermQuery) clauses[0].getQuery()).getTerm(), equalTo(new Term("name.first", "shay")));
+      assertThat(clauses[0].getOccur(), equalTo(BooleanClause.Occur.SHOULD));
+
+      assertThat(((TermQuery) clauses[1].getQuery()).getTerm(), equalTo(new Term("name.first", "test")));
+      assertThat(clauses[1].getOccur(), equalTo(BooleanClause.Occur.SHOULD));
+    }
+
+    @Test
     public void testTermsQuery() throws IOException {
         IndexQueryParserService queryParser = queryParser();
         String query = copyToStringFromClasspath("/org/elasticsearch/test/unit/index/query/terms-query.json");
@@ -1209,6 +1227,26 @@ public class SimpleIndexQueryParserTests {
 
         assertThat(((TermQuery) clauses[1].getQuery()).getTerm(), equalTo(new Term("name.first", "test")));
         assertThat(clauses[1].getOccur(), equalTo(BooleanClause.Occur.SHOULD));
+    }
+
+    @Test
+    public void testInQuery() throws IOException {
+        IndexQueryParserService queryParser = queryParser();
+        Query parsedQuery = queryParser.parse(termsQuery("name.first", Lists.newArrayList("test1", "test2", "test3"))).query();
+        assertThat(parsedQuery, instanceOf(BooleanQuery.class));
+        BooleanQuery booleanQuery = (BooleanQuery) parsedQuery;
+        BooleanClause[] clauses = booleanQuery.getClauses();
+
+        assertThat(clauses.length, equalTo(3));
+
+        assertThat(((TermQuery) clauses[0].getQuery()).getTerm(), equalTo(new Term("name.first", "test1")));
+        assertThat(clauses[0].getOccur(), equalTo(BooleanClause.Occur.SHOULD));
+
+        assertThat(((TermQuery) clauses[1].getQuery()).getTerm(), equalTo(new Term("name.first", "test2")));
+        assertThat(clauses[1].getOccur(), equalTo(BooleanClause.Occur.SHOULD));
+
+        assertThat(((TermQuery) clauses[2].getQuery()).getTerm(), equalTo(new Term("name.first", "test3")));
+        assertThat(clauses[2].getOccur(), equalTo(BooleanClause.Occur.SHOULD));
     }
 
     @Test
@@ -1500,6 +1538,22 @@ public class SimpleIndexQueryParserTests {
         assertThat(((SpanTermQuery) spanNearQuery.getClauses()[2]).getTerm(), equalTo(new Term("age", longToPrefixCoded(36, 0))));
         assertThat(spanNearQuery.isInOrder(), equalTo(false));
     }
+    
+    @Test
+    public void testFieldMaskingSpanQuery() throws IOException {
+        IndexQueryParserService queryParser = queryParser();
+        String query = copyToStringFromClasspath("/org/elasticsearch/test/unit/index/query/spanFieldMaskingTerm.json");
+        Query parsedQuery = queryParser.parse(query).query();
+        assertThat(parsedQuery, instanceOf(SpanNearQuery.class));
+        SpanNearQuery spanNearQuery = (SpanNearQuery) parsedQuery;
+        assertThat(spanNearQuery.getClauses().length, equalTo(3));
+        assertThat(((SpanTermQuery) spanNearQuery.getClauses()[0]).getTerm(), equalTo(new Term("age", longToPrefixCoded(34, 0))));
+        assertThat(((SpanTermQuery) spanNearQuery.getClauses()[1]).getTerm(), equalTo(new Term("age", longToPrefixCoded(35, 0))));
+        assertThat(((SpanTermQuery)((FieldMaskingSpanQuery) spanNearQuery.getClauses()[2]).getMaskedQuery()).getTerm(), equalTo(new Term("age_1", "36")));
+        assertThat(spanNearQuery.isInOrder(), equalTo(false));
+    }
+    
+    
 
     @Test
     public void testSpanOrQueryBuilder() throws IOException {

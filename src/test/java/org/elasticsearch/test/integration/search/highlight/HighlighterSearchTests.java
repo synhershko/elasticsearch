@@ -19,12 +19,31 @@
 
 package org.elasticsearch.test.integration.search.highlight;
 
-import org.apache.lucene.index.Term;
-import org.apache.lucene.search.BooleanQuery;
-import org.apache.lucene.search.PhraseQuery;
-import org.apache.lucene.search.TermQuery;
-import org.apache.lucene.search.BooleanClause.Occur;
-import org.apache.lucene.search.vectorhighlight.FieldQuery;
+import static org.elasticsearch.action.search.SearchType.QUERY_THEN_FETCH;
+import static org.elasticsearch.client.Requests.searchRequest;
+import static org.elasticsearch.common.unit.TimeValue.timeValueMinutes;
+import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
+import static org.elasticsearch.index.query.QueryBuilders.boolQuery;
+import static org.elasticsearch.index.query.QueryBuilders.boostingQuery;
+import static org.elasticsearch.index.query.QueryBuilders.commonTerms;
+import static org.elasticsearch.index.query.QueryBuilders.constantScoreQuery;
+import static org.elasticsearch.index.query.QueryBuilders.fieldQuery;
+import static org.elasticsearch.index.query.QueryBuilders.matchPhrasePrefixQuery;
+import static org.elasticsearch.index.query.QueryBuilders.matchPhraseQuery;
+import static org.elasticsearch.index.query.QueryBuilders.matchQuery;
+import static org.elasticsearch.index.query.QueryBuilders.prefixQuery;
+import static org.elasticsearch.index.query.QueryBuilders.termQuery;
+import static org.elasticsearch.search.builder.SearchSourceBuilder.highlight;
+import static org.elasticsearch.search.builder.SearchSourceBuilder.searchSource;
+import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertHighlight;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.instanceOf;
+import static org.testng.Assert.fail;
+
+import java.io.IOException;
+import java.util.Arrays;
+
 import org.elasticsearch.ElasticSearchException;
 import org.elasticsearch.action.search.SearchPhaseExecutionException;
 import org.elasticsearch.action.search.SearchResponse;
@@ -37,6 +56,7 @@ import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.index.query.FilterBuilders;
 import org.elasticsearch.index.query.MatchQueryBuilder;
+import org.elasticsearch.index.query.MatchQueryBuilder.Operator;
 import org.elasticsearch.index.query.MatchQueryBuilder.Type;
 import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.indices.IndexMissingException;
@@ -45,29 +65,9 @@ import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.search.highlight.HighlightBuilder;
 import org.elasticsearch.test.integration.AbstractNodesTests;
-import org.hamcrest.Matcher;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
-
-import java.io.IOException;
-import java.util.Arrays;
-
-import static org.elasticsearch.action.search.SearchType.QUERY_THEN_FETCH;
-import static org.elasticsearch.client.Requests.searchRequest;
-import static org.elasticsearch.common.unit.TimeValue.timeValueMinutes;
-import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
-import static org.elasticsearch.index.query.QueryBuilders.*;
-import static org.elasticsearch.search.builder.SearchSourceBuilder.highlight;
-import static org.elasticsearch.search.builder.SearchSourceBuilder.searchSource;
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.equalTo;
-import static org.hamcrest.Matchers.greaterThan;
-import static org.hamcrest.Matchers.notNullValue;
-
-
-import static org.hamcrest.Matchers.instanceOf;
-import static org.testng.Assert.fail;
 
 /**
  *
@@ -91,6 +91,141 @@ public class HighlighterSearchTests extends AbstractNodesTests {
 
     protected Client getClient() {
         return client("server1");
+    }
+    
+    @Test
+    public void testNgramHighlightingWithBrokenPositions() throws ElasticSearchException, IOException {
+        try {
+            client.admin().indices().prepareDelete("test").execute().actionGet();
+        } catch (Exception e) {
+            // ignore
+        }
+        
+        client.admin().indices().prepareCreate("test")
+        .addMapping("test", jsonBuilder()
+                .startObject()
+                    .startObject("test")
+                        .startObject("properties")
+                            .startObject("name")
+                                .startObject("fields")
+                                    .startObject("autocomplete")
+                                        .field("type", "string")
+                                        .field("index_analyzer", "autocomplete")
+                                        .field("search_analyzer", "search_autocomplete")
+                                        .field("term_vector", "with_positions_offsets")
+                                    .endObject()
+                                    .startObject("name")
+                                        .field("type", "string")
+                                    .endObject()
+                                .endObject()
+                                .field("type", "multi_field")
+                        .endObject()
+                    .endObject()
+                .endObject())
+        .setSettings(ImmutableSettings.settingsBuilder()
+                .put("index.number_of_shards", 1)
+                .put("analysis.tokenizer.autocomplete.max_gram", 20)
+                .put("analysis.tokenizer.autocomplete.min_gram", 1)
+                .put("analysis.tokenizer.autocomplete.type", "nGram")
+                .put("analysis.filter.wordDelimiter.type", "word_delimiter")
+                .putArray("analysis.filter.wordDelimiter.type_table",
+                        "& => ALPHANUM", "| => ALPHANUM", "! => ALPHANUM",
+                        "? => ALPHANUM", ". => ALPHANUM", "- => ALPHANUM", "# => ALPHANUM", "% => ALPHANUM",
+                        "+ => ALPHANUM", ", => ALPHANUM", "~ => ALPHANUM", ": => ALPHANUM", "/ => ALPHANUM",
+                        "^ => ALPHANUM", "$ => ALPHANUM", "@ => ALPHANUM", ") => ALPHANUM", "( => ALPHANUM",
+                        "] => ALPHANUM", "[ => ALPHANUM", "} => ALPHANUM", "{ => ALPHANUM")
+                        
+                .put("analysis.filter.wordDelimiter.type.split_on_numerics", false)
+                .put("analysis.filter.wordDelimiter.generate_word_parts", true)
+                .put("analysis.filter.wordDelimiter.generate_number_parts", false)
+                .put("analysis.filter.wordDelimiter.catenate_words", true)
+                .put("analysis.filter.wordDelimiter.catenate_numbers", true)
+                .put("analysis.filter.wordDelimiter.catenate_all", false)
+
+                .put("analysis.analyzer.autocomplete.tokenizer", "autocomplete")
+                .putArray("analysis.analyzer.autocomplete.filter", "lowercase", "wordDelimiter")
+                .put("analysis.analyzer.search_autocomplete.tokenizer", "whitespace")
+                .putArray("analysis.analyzer.search_autocomplete.filter", "lowercase", "wordDelimiter"))
+        .execute().actionGet();
+        client.prepareIndex("test", "test", "1")
+            .setSource(XContentFactory.jsonBuilder()
+                    .startObject()
+                        .field( "name", "ARCOTEL Hotels Deutschland")
+                    .endObject())
+            .setRefresh(true).execute().actionGet();
+        SearchResponse search = client.prepareSearch("test").setTypes("test").setQuery(matchQuery("name.autocomplete", "deut tel").operator(Operator.OR)).addHighlightedField("name.autocomplete").execute().actionGet();
+        assertHighlight(search, 0, "name.autocomplete", 0, equalTo("ARCO<em>TEL</em> Ho<em>tel</em>s <em>Deut</em>schland"));
+    }
+    
+    @Test
+    public void testNgramHighlightingPreLucene42() throws ElasticSearchException, IOException {
+        try {
+            client.admin().indices().prepareDelete("test").execute().actionGet();
+        } catch (Exception e) {
+            // ignore
+        }
+        
+        client.admin().indices().prepareCreate("test")
+        .addMapping("test", jsonBuilder()
+                .startObject()
+                    .startObject("test")
+                        .startObject("properties")
+                            .startObject("name")
+                                .field("type", "string")
+                                .field("index_analyzer", "name_index_analyzer")
+                                .field("search_analyzer", "name_search_analyzer")
+                                .field("term_vector", "with_positions_offsets")
+                            .endObject()
+                            .startObject("name2")
+                                .field("type", "string")
+                                .field("index_analyzer", "name2_index_analyzer")
+                                .field("search_analyzer", "name_search_analyzer")
+                                .field("term_vector", "with_positions_offsets")
+                            .endObject()
+                        .endObject()
+                    .endObject()
+                .endObject())
+        .setSettings(ImmutableSettings.settingsBuilder()
+                .put("index.number_of_shards", 2)
+                .put("analysis.filter.my_ngram.max_gram", 20)
+                .put("analysis.filter.my_ngram.version", "4.1")
+                .put("analysis.filter.my_ngram.min_gram", 1)
+                .put("analysis.filter.my_ngram.type", "ngram")
+                .put("analysis.tokenizer.my_ngramt.max_gram", 20)
+                .put("analysis.tokenizer.my_ngramt.version", "4.1")
+                .put("analysis.tokenizer.my_ngramt.min_gram", 1)
+                .put("analysis.tokenizer.my_ngramt.type", "ngram")
+                .put("analysis.analyzer.name_index_analyzer.tokenizer", "my_ngramt")
+                .put("analysis.analyzer.name2_index_analyzer.tokenizer", "whitespace")
+                .put("analysis.analyzer.name2_index_analyzer.filter", "my_ngram")
+                .put("analysis.analyzer.name_search_analyzer.tokenizer", "whitespace"))
+        .execute().actionGet();
+        client.prepareIndex("test", "test", "1")
+            .setSource(XContentFactory.jsonBuilder()
+                    .startObject()
+                        .field("name", "logicacmg ehemals avinci - the know how company")
+                        .field("name2", "logicacmg ehemals avinci - the know how company")
+                    .endObject())
+            .setRefresh(true).execute().actionGet();
+        SearchResponse search = client.prepareSearch().setQuery(matchQuery("name", "logica m")).addHighlightedField("name").execute().actionGet();
+        assertHighlight(search, 0, "name", 0, equalTo("<em>logica</em>c<em>m</em>g ehe<em>m</em>als avinci - the know how co<em>m</em>pany"));
+        
+        search = client.prepareSearch().setQuery(matchQuery("name", "logica ma")).addHighlightedField("name").execute()
+                .actionGet();
+        assertHighlight(search, 0, "name", 0, equalTo("<em>logica</em>cmg ehe<em>ma</em>ls avinci - the know how company"));
+
+        search = client.prepareSearch().setQuery(matchQuery("name", "logica")).addHighlightedField("name").execute().actionGet();
+        assertHighlight(search, 0, "name", 0, equalTo("<em>logica</em>cmg ehemals avinci - the know how company"));
+        
+        search = client.prepareSearch().setQuery(matchQuery("name2", "logica m")).addHighlightedField("name2").execute().actionGet();
+        assertHighlight(search, 0, "name2", 0, equalTo("<em>logica</em>c<em>m</em>g ehe<em>m</em>als avinci - the know how co<em>m</em>pany"));
+        
+        search = client.prepareSearch().setQuery(matchQuery("name2", "logica ma")).addHighlightedField("name2").execute()
+                .actionGet();
+        assertHighlight(search, 0, "name2", 0, equalTo("<em>logica</em>cmg ehe<em>ma</em>ls avinci - the know how company"));
+
+        search = client.prepareSearch().setQuery(matchQuery("name2", "logica")).addHighlightedField("name2").execute().actionGet();
+        assertHighlight(search, 0, "name2", 0, equalTo("<em>logica</em>cmg ehemals avinci - the know how company"));
     }
     
     
@@ -166,16 +301,6 @@ public class HighlighterSearchTests extends AbstractNodesTests {
 
         
     }
-    
-    public void assertHighlight(SearchResponse resp, int hit, String field, int fragment, Matcher<String> matcher) {
-        assertThat(resp.getShardFailures().length, equalTo(0));
-        assertThat(resp.getHits().hits().length, greaterThan(hit));
-        assertThat(resp.getHits().hits()[hit].getHighlightFields().get(field), notNullValue());
-        assertThat(resp.getHits().hits()[hit].getHighlightFields().get(field).fragments().length, greaterThan(fragment));
-        assertThat(resp.getHits().hits()[hit].highlightFields().get(field).fragments()[fragment].string(),
-                matcher);
-    }
-
     
     @Test
     public void testEnsureNoNegativeOffsets() throws Exception {

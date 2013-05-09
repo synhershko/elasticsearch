@@ -113,9 +113,11 @@ public class XBooleanFilter extends Filter implements Iterable<FilterClause> {
             return null;
         }
 
-        // now, go over the clauses and apply the "fast" ones...
+        // now, go over the clauses and apply the "fast" ones first...
         hasNonEmptyShouldClause = false;
         boolean hasBits = false;
+        // But first we need to handle the "fast" should clauses, otherwise a should clause can unset docs
+        // that don't match with a must or must_not clause.
         for (int i = 0; i < results.size(); i++) {
             ResultClause clause = results.get(i);
             // we apply bits in based ones (slow) in the second run
@@ -133,7 +135,18 @@ public class XBooleanFilter extends Filter implements Iterable<FilterClause> {
                     res = new FixedBitSet(reader.maxDoc());
                 }
                 res.or(it);
-            } else if (clause.clause.getOccur() == Occur.MUST) {
+            }
+        }
+
+        // Now we safely handle the "fast" must and must_not clauses.
+        for (int i = 0; i < results.size(); i++) {
+            ResultClause clause = results.get(i);
+            // we apply bits in based ones (slow) in the second run
+            if (clause.bits != null) {
+                hasBits = true;
+                continue;
+            }
+            if (clause.clause.getOccur() == Occur.MUST) {
                 DocIdSetIterator it = clause.docIdSet.iterator();
                 if (it == null) {
                     return null;
