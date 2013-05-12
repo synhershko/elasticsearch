@@ -45,6 +45,7 @@ import org.elasticsearch.index.mapper.ParsedDocument;
 import org.elasticsearch.search.SearchParseElement;
 import org.elasticsearch.search.fetch.FetchPhaseExecutionException;
 import org.elasticsearch.search.fetch.FetchSubPhase;
+import org.elasticsearch.search.highlight.vectorhighlight.ParsedDocSimpleFragmentsBuilder;
 import org.elasticsearch.search.highlight.vectorhighlight.SourceScoreOrderFragmentsBuilder;
 import org.elasticsearch.search.highlight.vectorhighlight.SourceSimpleFragmentsBuilder;
 import org.elasticsearch.search.internal.InternalSearchHit;
@@ -276,7 +277,9 @@ public class HighlightPhase extends AbstractComponent implements FetchSubPhase {
                             if (field.numberOfFragments() == 0) {
                                 fragListBuilder = new SingleFragListBuilder();
 
-                                if (mapper.fieldType().stored()) {
+                                if (parsedDocument != null) {
+                                    fragmentsBuilder = new ParsedDocSimpleFragmentsBuilder(mapper, context, field.preTags(), field.postTags(), boundaryScanner, parsedDocument.rootDoc());
+                                } else if (mapper.fieldType().stored()) {
                                     fragmentsBuilder = new SimpleFragmentsBuilder(field.preTags(), field.postTags(), boundaryScanner);
                                 } else {
                                     fragmentsBuilder = new SourceSimpleFragmentsBuilder(mapper, context, field.preTags(), field.postTags(), boundaryScanner);
@@ -284,13 +287,17 @@ public class HighlightPhase extends AbstractComponent implements FetchSubPhase {
                             } else {
                                 fragListBuilder = field.fragmentOffset() == -1 ? new SimpleFragListBuilder() : new SimpleFragListBuilder(field.fragmentOffset());
                                 if (field.scoreOrdered()) {
-                                    if (mapper.fieldType().stored()) {
+                                    if (parsedDocument != null) {
+                                        fragmentsBuilder = new ParsedDocSimpleFragmentsBuilder(mapper, context, field.preTags(), field.postTags(), boundaryScanner, parsedDocument.rootDoc());
+                                    } else if (mapper.fieldType().stored()) {
                                         fragmentsBuilder = new ScoreOrderFragmentsBuilder(field.preTags(), field.postTags(), boundaryScanner);
                                     } else {
                                         fragmentsBuilder = new SourceScoreOrderFragmentsBuilder(mapper, context, field.preTags(), field.postTags(), boundaryScanner);
                                     }
                                 } else {
-                                    if (mapper.fieldType().stored()) {
+                                    if (parsedDocument != null) {
+                                        fragmentsBuilder = new ParsedDocSimpleFragmentsBuilder(mapper, context, field.preTags(), field.postTags(), boundaryScanner, parsedDocument.rootDoc());
+                                    } else if (mapper.fieldType().stored()) {
                                         fragmentsBuilder = new SimpleFragmentsBuilder(field.preTags(), field.postTags(), boundaryScanner);
                                     } else {
                                         fragmentsBuilder = new SourceSimpleFragmentsBuilder(mapper, context, field.preTags(), field.postTags(), boundaryScanner);

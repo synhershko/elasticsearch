@@ -356,7 +356,7 @@ public class PercolatorExecutor extends AbstractIndexComponent {
             synchronized (this) {
                 if (poolCurrentSize < poolMaxSize) {
                     poolCurrentSize++;
-                    return new ReusableMemoryIndex(false, bytesPerMemoryIndex);
+                    return new ReusableMemoryIndex(true, bytesPerMemoryIndex);
                     
                 } 
             }
@@ -368,7 +368,7 @@ public class PercolatorExecutor extends AbstractIndexComponent {
                 // don't swallow the interrupt
                 Thread.currentThread().interrupt();
             }
-            return poll == null ? new ReusableMemoryIndex(false, bytesPerMemoryIndex) : poll;
+            return poll == null ? new ReusableMemoryIndex(true, bytesPerMemoryIndex) : poll;
         }
         
         public void release(ReusableMemoryIndex index) {
@@ -586,16 +586,19 @@ public class PercolatorExecutor extends AbstractIndexComponent {
                         } catch (IOException e) {
                             logger.warn("[" + entry.getKey() + "] failed to execute query", e);
                         }
-    
+
                         if (collector.exists()) {
-	                        if (entry.getValue().getHighlightContext() == null) {
+                            SearchContextHighlight highlightContext = entry.getValue().getHighlightContext();
+                            if (highlightContext == null) highlightContext = request.getSearchContextHighlight();
+
+	                        if (highlightContext == null) {
     	                        matches.add(new PercolationMatch(entry.getKey()));
     	                    } else {
     	                        // TODO: we are assuming there is only one document in the index, whose docid is 0
     	                        InternalSearchHit searchHit = new InternalSearchHit(0, null, new StringText(parsedDocument.type()), null, null);
     	                        hitContext.reset(searchHit, (AtomicReaderContext)searcher.getTopReaderContext(), 0, searcher.getTopReaderContext().reader(), 0, null);
     	                        Map<String, HighlightField> highlightFields =
-    	                                HighlightPhase.doHighlighting(null, entry.getValue().getHighlightContext(), entry.getValue().getQuery(),
+    	                                HighlightPhase.doHighlighting(null, highlightContext, entry.getValue().getQuery(),
                                             mapperService, hitContext, true /* TODO */, parsedDocument);
 
     	                        matches.add(new PercolationMatch(entry.getKey(), highlightFields));
