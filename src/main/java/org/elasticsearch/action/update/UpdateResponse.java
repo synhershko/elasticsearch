@@ -87,7 +87,7 @@ public class UpdateResponse extends ActionResponse {
         return this.matches;
     }
 
-    void setGetResult(GetResult getResult) {
+    public void setGetResult(GetResult getResult) {
         this.getResult = getResult;
     }
 
