@@ -27,6 +27,7 @@ import org.elasticsearch.common.bytes.HashedBytesArray;
 import org.elasticsearch.common.collect.MapBuilder;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.text.UTF8SortedAsUnicodeComparator;
 import org.elasticsearch.common.trove.ExtTObjectIntHasMap;
 import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
 import org.elasticsearch.index.AbstractIndexComponent;
@@ -116,6 +117,15 @@ public class SimpleIdCache extends AbstractIndexComponent implements IdCache, Se
                 Map<Object, Map<String, TypeBuilder>> builders = new HashMap<Object, Map<String, TypeBuilder>>();
                 Map<Object, IndexReader> cacheToReader = new HashMap<Object, IndexReader>();
 
+                // We don't want to load uid of child documents, this allows us to not load uids of child types.
+                NavigableSet<HashedBytesArray> parentTypes = new TreeSet<HashedBytesArray>(UTF8SortedAsUnicodeComparator.utf8SortedAsUnicodeSortOrder);
+                for (String type : indexService.mapperService().types()) {
+                    ParentFieldMapper parentFieldMapper = indexService.mapperService().documentMapper(type).parentFieldMapper();
+                    if (parentFieldMapper != null) {
+                        parentTypes.add(new HashedBytesArray(parentFieldMapper.type()));
+                    }
+                }
+
                 // first, go over and load all the id->doc map for all types
                 for (AtomicReaderContext context : atomicReaderContexts) {
                     AtomicReader reader = context.reader();
@@ -136,12 +146,34 @@ public class SimpleIdCache extends AbstractIndexComponent implements IdCache, Se
                     if (terms != null) {
                         TermsEnum termsEnum = terms.iterator(null);
                         DocsEnum docsEnum = null;
-                        for (BytesRef term = termsEnum.next(); term != null; term = termsEnum.next()) {
+                        uid: for (BytesRef term = termsEnum.next(); term != null; term = termsEnum.next()) {
                             HashedBytesArray[] typeAndId = Uid.splitUidIntoTypeAndId(term);
-                            TypeBuilder typeBuilder = readerBuilder.get(typeAndId[0].toUtf8());
+                            if (!parentTypes.contains(typeAndId[0])) {
+                                do {
+                                    HashedBytesArray nextParent = parentTypes.ceiling(typeAndId[0]);
+                                    if (nextParent == null) {
+                                        break uid;
+                                    }
+
+                                    TermsEnum.SeekStatus status = termsEnum.seekCeil(nextParent.toBytesRef(), false);
+                                    if (status == TermsEnum.SeekStatus.END) {
+                                        break uid;
+                                    } else if (status == TermsEnum.SeekStatus.NOT_FOUND) {
+                                        term = termsEnum.term();
+                                        typeAndId = Uid.splitUidIntoTypeAndId(term);
+                                    } else if (status == TermsEnum.SeekStatus.FOUND) {
+                                        assert false : "Seek status should never be FOUND, because we seek only the type part";
+                                        term = termsEnum.term();
+                                        typeAndId = Uid.splitUidIntoTypeAndId(term);
+                                    }
+                                } while (!parentTypes.contains(typeAndId[0]));
+                            }
+
+                            String type = typeAndId[0].toUtf8();
+                            TypeBuilder typeBuilder = readerBuilder.get(type);
                             if (typeBuilder == null) {
                                 typeBuilder = new TypeBuilder(reader);
-                                readerBuilder.put(typeAndId[0].toUtf8(), typeBuilder);
+                                readerBuilder.put(type, typeBuilder);
                             }
 
                             HashedBytesArray idAsBytes = checkIfCanReuse(builders, typeAndId[1]);
