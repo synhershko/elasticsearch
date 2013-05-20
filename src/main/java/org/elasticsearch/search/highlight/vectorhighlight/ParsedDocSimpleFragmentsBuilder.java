@@ -23,7 +23,9 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.TextField;
 import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.search.highlight.Encoder;
 import org.apache.lucene.search.vectorhighlight.BoundaryScanner;
+import org.apache.lucene.search.vectorhighlight.FieldFragList;
 import org.apache.lucene.search.vectorhighlight.SimpleFragmentsBuilder;
 import org.elasticsearch.index.mapper.FieldMapper;
 import org.elasticsearch.search.internal.SearchContext;
@@ -69,9 +71,9 @@ public class ParsedDocSimpleFragmentsBuilder extends SimpleFragmentsBuilder {
         return fields;
     }
 
-//    protected String makeFragment( StringBuilder buffer, int[] index, Field[] values, WeightedFragInfo fragInfo,
-//            String[] preTags, String[] postTags, Encoder encoder ){
-//        return super.makeFragment(buffer, index, values, FragmentBuilderHelper.fixWeightedFragInfo(mapper, values, fragInfo), preTags, postTags, encoder);
-//   }
+    protected String makeFragment( StringBuilder buffer, int[] index, Field[] values, FieldFragList.WeightedFragInfo fragInfo,
+            String[] preTags, String[] postTags, Encoder encoder ){
+        return super.makeFragment(buffer, index, values, FragmentBuilderHelper.fixWeightedFragInfo(mapper, values, fragInfo), preTags, postTags, encoder);
+   }
 
 }
