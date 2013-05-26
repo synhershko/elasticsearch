@@ -314,21 +314,22 @@ public class HighlightPhase extends AbstractComponent implements FetchSubPhase {
                                 // fragment builders are used explicitly
                                 cache.fvh = new FastVectorHighlighter();
                             }
-                            CustomFieldQuery.highlightFilters.set(field.highlightFilter());
-                            if (field.requireFieldMatch()) {
-                                if (cache.fieldMatchFieldQuery == null) {
-                                    // we use top level reader to rewrite the query against all readers, with use caching it across hits (and across readers...)
-                                    cache.fieldMatchFieldQuery = new CustomFieldQuery(query, hitContext.topLevelReader(), true, field.requireFieldMatch());
-                                }
-                                fieldQuery = cache.fieldMatchFieldQuery;
-                            } else {
-                                if (cache.noFieldMatchFieldQuery == null) {
-                                    // we use top level reader to rewrite the query against all readers, with use caching it across hits (and across readers...)
-                                    cache.noFieldMatchFieldQuery = new CustomFieldQuery(query, hitContext.topLevelReader(), true, field.requireFieldMatch());
-                                }
-                                fieldQuery = cache.noFieldMatchFieldQuery;
-                            }
                             cache.mappers.put(mapper, entry);
+                        }
+
+                        CustomFieldQuery.highlightFilters.set(field.highlightFilter());
+                        if (field.requireFieldMatch()) {
+                            if (cache.fieldMatchFieldQuery == null) {
+                                // we use top level reader to rewrite the query against all readers, with use caching it across hits (and across readers...)
+                                cache.fieldMatchFieldQuery = new CustomFieldQuery(query, hitContext.topLevelReader(), true, field.requireFieldMatch());
+                            }
+                            fieldQuery = cache.fieldMatchFieldQuery;
+                        } else {
+                            if (cache.noFieldMatchFieldQuery == null) {
+                                // we use top level reader to rewrite the query against all readers, with use caching it across hits (and across readers...)
+                                cache.noFieldMatchFieldQuery = new CustomFieldQuery(query, hitContext.topLevelReader(), true, field.requireFieldMatch());
+                            }
+                            fieldQuery = cache.noFieldMatchFieldQuery;
                         }
 
                         String[] fragments;
