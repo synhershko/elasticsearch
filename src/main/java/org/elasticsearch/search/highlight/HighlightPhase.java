@@ -314,22 +314,8 @@ public class HighlightPhase extends AbstractComponent implements FetchSubPhase {
                                 // fragment builders are used explicitly
                                 cache.fvh = new FastVectorHighlighter();
                             }
+                            CustomFieldQuery.highlightFilters.set(field.highlightFilter());
                             cache.mappers.put(mapper, entry);
-                        }
-
-                        CustomFieldQuery.highlightFilters.set(field.highlightFilter());
-                        if (field.requireFieldMatch()) {
-                            if (cache.fieldMatchFieldQuery == null) {
-                                // we use top level reader to rewrite the query against all readers, with use caching it across hits (and across readers...)
-                                cache.fieldMatchFieldQuery = new CustomFieldQuery(query, hitContext.topLevelReader(), true, field.requireFieldMatch());
-                            }
-                            fieldQuery = cache.fieldMatchFieldQuery;
-                        } else {
-                            if (cache.noFieldMatchFieldQuery == null) {
-                                // we use top level reader to rewrite the query against all readers, with use caching it across hits (and across readers...)
-                                cache.noFieldMatchFieldQuery = new CustomFieldQuery(query, hitContext.topLevelReader(), true, field.requireFieldMatch());
-                            }
-                            fieldQuery = cache.noFieldMatchFieldQuery;
                         }
 
                         String[] fragments;
@@ -337,6 +323,14 @@ public class HighlightPhase extends AbstractComponent implements FetchSubPhase {
                         // a HACK to make highlighter do highlighting, even though its using the single frag list builder
                         int numberOfFragments = field.numberOfFragments() == 0 ? Integer.MAX_VALUE : field.numberOfFragments();
                         int fragmentCharSize = field.numberOfFragments() == 0 ? Integer.MAX_VALUE : field.fragmentCharSize();
+
+                        if (field.requireFieldMatch()) {
+                            fieldQuery = new CustomFieldQuery(query, hitContext.topLevelReader(), true, field.requireFieldMatch());
+                        } else {
+                            // we use top level reader to rewrite the query against all readers, with use caching it across hits (and across readers...)
+                            fieldQuery = new CustomFieldQuery(query, hitContext.topLevelReader(), true, field.requireFieldMatch());
+                        }
+
                         // we highlight against the low level reader and docId, because if we load source, we want to reuse it if possible
                         fragments = cache.fvh.getBestFragments(fieldQuery, hitContext.reader(), hitContext.docId(), mapper.names().indexName(), fragmentCharSize, numberOfFragments,
                                 entry.fragListBuilder, entry.fragmentsBuilder, field.preTags(), field.postTags(), encoder);
