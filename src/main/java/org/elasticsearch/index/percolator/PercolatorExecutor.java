@@ -382,9 +382,10 @@ public class PercolatorExecutor extends AbstractIndexComponent {
         
     }
     
-
     private IndicesService indicesService;
     private final MemoryIndexPool memIndexPool;
+
+    public static PercolatorExecutor instance;
 
     @Inject
     public PercolatorExecutor(Index index, @IndexSettings Settings indexSettings,
@@ -398,6 +399,8 @@ public class PercolatorExecutor extends AbstractIndexComponent {
         memIndexPool = new MemoryIndexPool(indexSettings);
         ApplySettings applySettings = new ApplySettings();
         indexSettingsService.addListener(applySettings);
+
+        if (PercolatorService.GLOBAL_PERCOLATION_TYPE_NAME.equals(index.name())) instance = this;
     }
     
     class ApplySettings implements IndexSettingsService.Listener {
@@ -491,6 +494,10 @@ public class PercolatorExecutor extends AbstractIndexComponent {
     }
 
     public Response percolate(final SourceRequest request) throws ElasticSearchException {
+        return percolate(request,  null);
+    }
+
+    public Response percolate(final SourceRequest request, final String queryId) throws ElasticSearchException {
         Query query = null;
         SearchContextHighlight searchContextHighlight = null;
         ParsedDocument doc = null;
@@ -535,7 +542,7 @@ public class PercolatorExecutor extends AbstractIndexComponent {
             throw new PercolatorException(index, "No doc to percolate in the request");
         }
 
-        return percolate(new DocAndQueryRequest(doc, query, searchContextHighlight));
+        return percolate(new DocAndQueryRequest(doc, query, searchContextHighlight), queryId);
     }
 
     public Response percolate(DocAndSourceQueryRequest request) throws ElasticSearchException {
@@ -543,12 +550,13 @@ public class PercolatorExecutor extends AbstractIndexComponent {
         if (Strings.hasLength(request.query()) && !request.query().equals("*")) {
             query = percolatorIndexServiceSafe().queryParserService().parse(QueryBuilders.queryString(request.query())).query();
         }
-        return percolate(new DocAndQueryRequest(request.doc(), query));
+        return percolate(new DocAndQueryRequest(request.doc(), query), null);
     }
 
-    private Response percolate(DocAndQueryRequest request) throws ElasticSearchException {
+    private Response percolate(DocAndQueryRequest request, final String queryId) throws ElasticSearchException {
         // first, parse the source doc into a MemoryIndex
         final ReusableMemoryIndex memoryIndex = memIndexPool.acquire();
+        memoryIndex.reset();
         try {
             // TODO: This means percolation does not support nested docs...
             for (IndexableField field : request.doc().rootDoc().getFields()) {
@@ -580,6 +588,8 @@ public class PercolatorExecutor extends AbstractIndexComponent {
 
                     Lucene.ExistsCollector collector = new Lucene.ExistsCollector();
                     for (Map.Entry<String, QueryAndHighlightContext> entry : queries.entrySet()) {
+                        if (queryId != null && !queryId.equals(entry.getKey())) continue; // allow skipping queries
+
                         collector.reset();
                         try {
                             searcher.search(entry.getValue().getQuery(), collector);

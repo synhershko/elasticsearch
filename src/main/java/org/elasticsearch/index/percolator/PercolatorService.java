@@ -28,9 +28,7 @@ import org.apache.lucene.search.Filter;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.Scorer;
 import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.lucene.search.OrFilter;
 import org.elasticsearch.common.lucene.search.TermFilter;
-import org.elasticsearch.common.lucene.search.XConstantScoreQuery;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.AbstractIndexComponent;
 import org.elasticsearch.index.Index;
@@ -47,7 +45,6 @@ import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.search.highlight.SearchContextHighlight;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Map;
 
 /**
@@ -99,38 +96,38 @@ public class PercolatorService extends AbstractIndexComponent {
         this.percolator.setIndicesService(indicesService);
 
         // if percolator is already allocated, make sure to register real time percolation
-        if (percolatorAllocated()) {
-            IndexService percolatorIndexService = percolatorIndexService();
-            if (percolatorIndexService != null) {
-                for (IndexShard indexShard : percolatorIndexService) {
-                    try {
-                        indexShard.indexingService().addListener(realTimePercolatorOperationListener);
-                    } catch (Exception e) {
-                        // ignore
-                    }
-                }
-            }
-        }
+//        if (percolatorAllocated()) {
+//            IndexService percolatorIndexService = percolatorIndexService();
+//            if (percolatorIndexService != null) {
+//                for (IndexShard indexShard : percolatorIndexService) {
+//                    try {
+//                        indexShard.indexingService().addListener(realTimePercolatorOperationListener);
+//                    } catch (Exception e) {
+//                        // ignore
+//                    }
+//                }
+//            }
+//        }
     }
 
     public void close() {
         this.indicesService.indicesLifecycle().removeListener(shardLifecycleListener);
 
         // clean up any index that has registered real time updated from the percolator shards allocated on this node
-        IndexService percolatorIndexService = percolatorIndexService();
-        if (percolatorIndexService != null) {
-            for (IndexShard indexShard : percolatorIndexService) {
-                try {
-                    indexShard.indexingService().removeListener(realTimePercolatorOperationListener);
-                } catch (Exception e) {
-                    // ignore
-                }
-            }
-        }
+//        IndexService percolatorIndexService = percolatorIndexService();
+//        if (percolatorIndexService != null) {
+//            for (IndexShard indexShard : percolatorIndexService) {
+//                try {
+//                    indexShard.indexingService().removeListener(realTimePercolatorOperationListener);
+//                } catch (Exception e) {
+//                    // ignore
+//                }
+//            }
+//        }
     }
 
     public PercolatorExecutor.Response percolate(PercolatorExecutor.SourceRequest request) throws PercolatorException {
-        return percolator.percolate(request);
+        return percolator.percolate(request, null);
     }
 
     public PercolatorExecutor.Response percolate(PercolatorExecutor.DocAndSourceQueryRequest request) throws PercolatorException {
@@ -138,31 +135,26 @@ public class PercolatorService extends AbstractIndexComponent {
     }
 
     private void loadQueries(final String indexName) {
-        IndexService indexService = percolatorIndexService();
-        IndexShard shard = indexService.shard(0);
-        shard.refresh(new Engine.Refresh(true));
-        Engine.Searcher searcher = shard.searcher();
-        try {
-            // create a query to fetch all queries that are registered under the index name (which is the type
-            // in the percolator).
-            Query query = new XConstantScoreQuery(indexQueriesFilter(indexName));
-            QueriesLoaderCollector queries = new QueriesLoaderCollector();
-            searcher.searcher().search(query, queries);
-            percolator.addQueries(queries.queries());
-        } catch (IOException e) {
-            throw new PercolatorException(index, "failed to load queries from percolator index");
-        } finally {
-            searcher.release();
-        }
+//        IndexService indexService = percolatorIndexService();
+//        IndexShard shard = indexService.shard(0);
+//        shard.refresh(new Engine.Refresh(true));
+//        Engine.Searcher searcher = shard.searcher();
+//        try {
+//            // create a query to fetch all queries that are registered under the index name (which is the type
+//            // in the percolator).
+//            Query query = new XConstantScoreQuery(indexQueriesFilter(indexName));
+//            QueriesLoaderCollector queries = new QueriesLoaderCollector();
+//            searcher.searcher().search(query, queries);
+//            percolator.addQueries(queries.queries());
+//        } catch (IOException e) {
+//            throw new PercolatorException(index, "failed to load queries from percolator index");
+//        } finally {
+//            searcher.release();
+//        }
     }
 
     private Filter indexQueriesFilter(final String indexName) {
-        return percolatorIndexService().cache().filter().cache(
-                new OrFilter(new ArrayList<Filter>() {{
-                    add(new TermFilter(new Term(TypeFieldMapper.NAME, indexName)));
-                    add(new TermFilter(new Term(TypeFieldMapper.NAME, GLOBAL_PERCOLATION_TYPE_NAME)));
-                }})
-        );
+        return percolatorIndexService().cache().filter().cache(new TermFilter(new Term(TypeFieldMapper.NAME, indexName)));
     }
 
     private boolean percolatorAllocated() {
@@ -233,7 +225,7 @@ public class PercolatorService extends AbstractIndexComponent {
             // add a listener that will update based on changes done to the _percolate index
             // the relevant indices with loaded queries
             if (indexShard.shardId().index().name().equals(INDEX_NAME)) {
-                indexShard.indexingService().addListener(realTimePercolatorOperationListener);
+                //indexShard.indexingService().addListener(realTimePercolatorOperationListener);
             }
         }
 
