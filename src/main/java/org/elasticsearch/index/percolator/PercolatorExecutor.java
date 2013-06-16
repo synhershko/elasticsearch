@@ -584,8 +584,6 @@ public class PercolatorExecutor extends AbstractIndexComponent {
     
             try {
                 if (request.query() == null) {
-	                FetchSubPhase.HitContext hitContext = new FetchSubPhase.HitContext();
-
                     Lucene.ExistsCollector collector = new Lucene.ExistsCollector();
                     for (Map.Entry<String, QueryAndHighlightContext> entry : queries.entrySet()) {
                         if (queryId != null && !queryId.equals(entry.getKey())) continue; // allow skipping queries
@@ -605,6 +603,7 @@ public class PercolatorExecutor extends AbstractIndexComponent {
     	                        matches.add(new PercolationMatch(entry.getKey()));
     	                    } else {
     	                        // TODO: we are assuming there is only one document in the index, whose docid is 0
+                                final FetchSubPhase.HitContext hitContext = new FetchSubPhase.HitContext();
     	                        InternalSearchHit searchHit = new InternalSearchHit(0, null, new StringText(parsedDocument.type()), null, null);
     	                        hitContext.reset(searchHit, (AtomicReaderContext)searcher.getTopReaderContext(), 0, searcher.getTopReaderContext().reader(), 0, null);
     	                        Map<String, HighlightField> highlightFields =
