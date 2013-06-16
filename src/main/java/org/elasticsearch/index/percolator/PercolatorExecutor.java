@@ -55,7 +55,6 @@ import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.AbstractIndexComponent;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.cache.IndexCache;
-import org.elasticsearch.index.engine.Engine;
 import org.elasticsearch.index.fielddata.BytesValues;
 import org.elasticsearch.index.fielddata.FieldDataType;
 import org.elasticsearch.index.fielddata.IndexFieldData;
@@ -68,7 +67,6 @@ import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.index.service.IndexService;
 import org.elasticsearch.index.settings.IndexSettings;
 import org.elasticsearch.index.settings.IndexSettingsService;
-import org.elasticsearch.index.shard.service.IndexShard;
 import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.search.fetch.FetchSubPhase;
 import org.elasticsearch.search.highlight.*;
@@ -555,8 +553,9 @@ public class PercolatorExecutor extends AbstractIndexComponent {
 
     private Response percolate(DocAndQueryRequest request, final String queryId) throws ElasticSearchException {
         // first, parse the source doc into a MemoryIndex
-        final ReusableMemoryIndex memoryIndex = memIndexPool.acquire();
-        memoryIndex.reset();
+        //final ReusableMemoryIndex memoryIndex = memIndexPool.acquire();
+        //memoryIndex.reset();
+        final MemoryIndex memoryIndex = new MemoryIndex(true);
         try {
             // TODO: This means percolation does not support nested docs...
             for (IndexableField field : request.doc().rootDoc().getFields()) {
@@ -583,7 +582,6 @@ public class PercolatorExecutor extends AbstractIndexComponent {
 			final ParsedDocument parsedDocument = request.doc();
     
             try {
-                if (request.query() == null) {
                     Lucene.ExistsCollector collector = new Lucene.ExistsCollector();
                     for (Map.Entry<String, QueryAndHighlightContext> entry : queries.entrySet()) {
                         if (queryId != null && !queryId.equals(entry.getKey())) continue; // allow skipping queries
@@ -596,17 +594,16 @@ public class PercolatorExecutor extends AbstractIndexComponent {
                         }
 
                         if (collector.exists()) {
-                            SearchContextHighlight highlightContext = entry.getValue().getHighlightContext();
-                            if (highlightContext == null) highlightContext = request.getSearchContextHighlight();
+                            final SearchContextHighlight highlightContext = request.getSearchContextHighlight();
 
 	                        if (highlightContext == null) {
     	                        matches.add(new PercolationMatch(entry.getKey()));
     	                    } else {
     	                        // TODO: we are assuming there is only one document in the index, whose docid is 0
                                 final FetchSubPhase.HitContext hitContext = new FetchSubPhase.HitContext();
-    	                        InternalSearchHit searchHit = new InternalSearchHit(0, null, new StringText(parsedDocument.type()), null, null);
+    	                        final InternalSearchHit searchHit = new InternalSearchHit(0, null, new StringText(parsedDocument.type()), null, null);
     	                        hitContext.reset(searchHit, (AtomicReaderContext)searcher.getTopReaderContext(), 0, searcher.getTopReaderContext().reader(), 0, null);
-    	                        Map<String, HighlightField> highlightFields =
+    	                        final Map<String, HighlightField> highlightFields =
     	                                HighlightPhase.doHighlighting(null, highlightContext, entry.getValue().getQuery(),
                                             mapperService, hitContext, true /* TODO */, parsedDocument);
 
@@ -614,21 +611,6 @@ public class PercolatorExecutor extends AbstractIndexComponent {
     	                    }
                         }
                     }
-                } else {
-                    IndexService percolatorIndex = percolatorIndexServiceSafe();
-                    if (percolatorIndex.numberOfShards() == 0) {
-                        throw new PercolateIndexUnavailable(new Index(PercolatorService.INDEX_NAME));
-                    }
-                    IndexShard percolatorShard = percolatorIndex.shard(0);
-                    Engine.Searcher percolatorSearcher = percolatorShard.searcher();
-                    try {
-                        percolatorSearcher.searcher().search(request.query(), new QueryCollector(logger, queries, searcher, percolatorIndex, mapperService, matches, parsedDocument));
-                    } catch (IOException e) {
-                        logger.warn("failed to execute", e);
-                    } finally {
-                        percolatorSearcher.release();
-                    }
-                }
             } finally {
                 // explicitly clear the reader, since we can only register on callback on SegmentReader
                 indexCache.clear(searcher.getIndexReader());
@@ -636,7 +618,7 @@ public class PercolatorExecutor extends AbstractIndexComponent {
             }
             return new Response(matches, request.doc().mappingsModified());
         } finally {
-            memIndexPool.release(memoryIndex);
+            //memIndexPool.release(memoryIndex);
         }
 
     }
